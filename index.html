@@ -2,101 +2,125 @@
 <html lang="ko">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <meta name="theme-color" content="#0b1220" />
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1, viewport-fit=cover"
+  />
+  <title>트렌드픽</title>
+
+  <meta name="theme-color" content="#0f1115" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <title>트렌드픽</title>
-  <link rel="manifest" href="manifest.json" />
-  <link rel="apple-touch-icon" href="icons/icon-192.png" />
-  <link rel="stylesheet" href="styles.css" />
+  <meta name="apple-mobile-web-app-title" content="트렌드픽" />
+
+  <link rel="manifest" href="./manifest.json" />
+  <link rel="stylesheet" href="./styles.css" />
+
+  <link rel="apple-touch-icon" href="./icons/icon-192.png" />
 </head>
 <body>
-  <div class="app-shell">
-    <header class="topbar">
+  <main style="padding: 20px 0 40px;">
+    <section style="padding: 0 14px;">
+      <div style="font-size: 14px; color: #9aa3b2; margin-bottom: 10px;">아이폰 홈 화면 웹앱</div>
+      <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px;">
+        <div>
+          <h1 style="margin:0; font-size:48px; line-height:1.05; font-weight:900;">트렌드픽</h1>
+        </div>
+        <button id="refreshBtn" class="action-btn" style="white-space:nowrap;">새로고침</button>
+      </div>
+    </section>
+
+    <section class="trend-item" style="margin-top:18px;">
+      <h2 style="margin:0 0 12px; font-size:22px;">지금 뜨는 이슈를 빠르게 확인</h2>
+      <p style="margin:0 0 18px; color:#d8deea; line-height:1.55;">
+        실시간 뉴스 RSS를 읽어 이슈를 묶어서 보여줘요. 연결이 안 될 때는 마지막 저장 데이터나 샘플 데이터를 보여줘요.
+      </p>
+
+      <div style="font-size:14px; color:#9aa3b2; margin-bottom:6px;">업데이트 시간</div>
+      <div id="updatedAt" style="font-size:20px; font-weight:800; margin-bottom:16px;">불러오는 중...</div>
+
+      <div style="font-size:14px; color:#9aa3b2; margin-bottom:6px;">데이터 상태</div>
+      <div id="sourceState" style="font-size:18px; font-weight:800;">불러오는 중</div>
+    </section>
+
+    <section style="padding: 0 14px; margin-top: 20px;">
+      <div id="categoryTabs" style="display:flex; gap:8px; overflow:auto; padding-bottom:4px;"></div>
+      <div style="margin-top:14px;">
+        <input
+          id="searchInput"
+          type="text"
+          placeholder="키워드 검색"
+          style="width:100%; background:#171a21; color:#f5f7fb; border:1px solid rgba(255,255,255,0.08); border-radius:16px; padding:14px 16px; font-size:16px;"
+        />
+      </div>
+    </section>
+
+    <section style="padding: 0 14px; margin-top: 28px;">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px;">
+        <h2 style="margin:0; font-size:22px;">실시간 키워드</h2>
+        <button id="showFavoritesBtn" class="action-btn">즐겨찾기</button>
+      </div>
+    </section>
+
+    <section id="trendList"></section>
+  </main>
+
+  <!-- 상세 시트 -->
+  <div id="sheetBackdrop" class="hidden" style="
+    position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:99;
+  "></div>
+
+  <section id="detailSheet" class="hidden" style="
+    position:fixed; left:0; right:0; bottom:0;
+    background:#171a21; color:#f5f7fb;
+    border-top-left-radius:22px; border-top-right-radius:22px;
+    padding:18px 16px 24px;
+    z-index:100;
+    max-height:78vh;
+    overflow:auto;
+    box-shadow:0 -12px 40px rgba(0,0,0,0.35);
+  ">
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
       <div>
-        <p class="eyebrow">아이폰 홈 화면 웹앱</p>
-        <h1>트렌드픽</h1>
+        <div id="detailRank" style="font-size:13px; color:#9aa3b2; margin-bottom:6px;"></div>
+        <div id="detailKeyword" style="font-size:24px; font-weight:900; line-height:1.3;"></div>
       </div>
-      <div class="top-actions">
-        <button id="refreshBtn" class="ghost-btn">새로고침</button>
-      </div>
-    </header>
-
-    <section class="hero-card">
-      <div class="hero-copy">
-        <p class="hero-title">지금 뜨는 이슈를 빠르게 확인</p>
-        <p class="hero-subtitle">실시간 뉴스 RSS를 읽어 키워드를 자동 추출합니다. 연결이 안 될 때는 마지막 저장 데이터나 샘플 데이터를 보여줘요.</p>
-      </div>
-      <div class="hero-meta">
-        <div>
-          <p class="label">업데이트 시간</p>
-          <p id="updatedAt" class="value">불러오는 중...</p>
-        </div>
-        <div>
-          <p class="label">데이터 상태</p>
-          <p id="sourceState" class="value">준비 중</p>
-        </div>
-      </div>
-    </section>
-
-    <section class="toolbar">
-      <div id="categoryTabs" class="tabs"></div>
-      <div class="search-wrap">
-        <input id="searchInput" type="search" placeholder="키워드 검색" />
-      </div>
-    </section>
-
-    <section class="section-header">
-      <h2>실시간 키워드</h2>
-      <button id="showFavoritesBtn" class="text-btn">즐겨찾기</button>
-    </section>
-
-    <main id="trendList" class="trend-list"></main>
-
-    <section class="tips-card">
-      <h3>안내</h3>
-      <p>뉴스 제공처나 네트워크 상태에 따라 일부 시간에는 실시간 불러오기가 실패할 수 있어요. 그럴 땐 앱이 마지막 성공 데이터를 보여줍니다.</p>
-    </section>
-  </div>
-
-  <div id="detailSheet" class="sheet hidden" aria-hidden="true">
-    <div class="sheet-backdrop" id="sheetBackdrop"></div>
-    <div class="sheet-panel">
-      <div class="sheet-handle"></div>
-      <div class="sheet-header">
-        <div>
-          <p id="detailRank" class="sheet-rank"></p>
-          <h3 id="detailKeyword"></h3>
-        </div>
-        <button id="closeDetailBtn" class="ghost-btn small">닫기</button>
-      </div>
-      <div class="sheet-summary">
-        <p id="detailSummary"></p>
-      </div>
-      <div class="sheet-actions">
-        <button id="favoriteBtn" class="ghost-btn small">즐겨찾기</button>
-        <button id="shareBtn" class="ghost-btn small">공유</button>
-      </div>
-      <section class="sheet-section">
-        <h4>연결된 기사</h4>
-        <div id="detailLinks" class="link-list"></div>
-      </section>
+      <button id="closeDetailBtn" class="action-btn">닫기</button>
     </div>
-  </div>
 
-  <div id="favoritesSheet" class="sheet hidden" aria-hidden="true">
-    <div class="sheet-backdrop" id="favoritesBackdrop"></div>
-    <div class="sheet-panel">
-      <div class="sheet-handle"></div>
-      <div class="sheet-header">
-        <h3>즐겨찾기</h3>
-        <button id="closeFavoritesBtn" class="ghost-btn small">닫기</button>
-      </div>
-      <div id="favoriteList" class="favorite-list"></div>
+    <p id="detailSummary" style="margin-top:16px; line-height:1.6; color:#dfe5ef;"></p>
+
+    <div style="display:flex; gap:8px; margin-top:14px;">
+      <button id="favoriteBtn" class="action-btn">즐겨찾기</button>
+      <button id="shareBtn" class="action-btn">공유</button>
     </div>
-  </div>
 
-  <script src="app.js"></script>
+    <div id="detailLinks" style="margin-top:18px;"></div>
+  </section>
+
+  <!-- 즐겨찾기 시트 -->
+  <div id="favoritesBackdrop" class="hidden" style="
+    position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:109;
+  "></div>
+
+  <section id="favoritesSheet" class="hidden" style="
+    position:fixed; left:0; right:0; bottom:0;
+    background:#171a21; color:#f5f7fb;
+    border-top-left-radius:22px; border-top-right-radius:22px;
+    padding:18px 16px 24px;
+    z-index:110;
+    max-height:70vh;
+    overflow:auto;
+    box-shadow:0 -12px 40px rgba(0,0,0,0.35);
+  ">
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+      <div style="font-size:22px; font-weight:900;">즐겨찾기</div>
+      <button id="closeFavoritesBtn" class="action-btn">닫기</button>
+    </div>
+
+    <div id="favoriteList" style="margin-top:16px;"></div>
+  </section>
+
+  <script src="./app.js"></script>
 </body>
 </html>
