@@ -1,4 +1,4 @@
-const CACHE_NAME = "trendpick-v3";
+const CACHE_NAME = "trendpick-v4";
 const URLS_TO_CACHE = [
   "./",
   "./index.html",
