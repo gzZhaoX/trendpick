@@ -1,3 +1,4 @@
+const API_BASE = "https://trendpick-api.onrender.com";
 const CATEGORY_FEEDS = {
   "전체": "https://news.google.com/rss?hl=ko&gl=KR&ceid=KR:ko",
   "정치": "https://news.google.com/rss/headlines/section/topic/POLITICS?hl=ko&gl=KR&ceid=KR:ko",
