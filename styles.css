@@ -172,3 +172,6 @@ body {
   border: 1px solid var(--line);
   color: var(--muted);
 }
+.hidden {
+  display: none !important;
+}
