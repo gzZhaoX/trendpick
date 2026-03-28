@@ -12,6 +12,7 @@ def get_trends():
         res = requests.get(url)
         res.encoding = 'utf-8'
         text = res.text
+
         words = re.findall(r"[가-힣]{2,}", text)
         counter = Counter(words)
 
@@ -28,4 +29,10 @@ def get_trends():
         return data
 
     except:
-        return [{"keyword": "데이터 없음", "rank": 1, "delta": 0, "category": "기타", "summary": "오류 발생"}]
+        return [{
+            "keyword": "데이터 없음",
+            "rank": 1,
+            "delta": 0,
+            "category": "기타",
+            "summary": "오류 발생"
+        }]
