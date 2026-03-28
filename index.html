@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#111827" />
+  <title>트렌드픽</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">홈 화면에 추가해서 사용</p>
+        <h1>트렌드픽</h1>
+      </div>
+      <button id="refreshBtn" class="ghost-btn">새로고침</button>
+    </header>
+
+    <section class="status-card">
+      <div>
+        <p class="label">업데이트 시간</p>
+        <p id="updatedAt" class="value">-</p>
+      </div>
+      <div>
+        <p class="label">저장한 키워드</p>
+        <p id="favoriteCount" class="value">0개</p>
+      </div>
+    </section>
+
+    <nav class="tabs" id="categoryTabs"></nav>
+
+    <main>
+      <section>
+        <div class="section-title-row">
+          <h2>실시간 키워드</h2>
+          <span id="currentCategoryLabel" class="chip">전체</span>
+        </div>
+        <div id="trendList" class="trend-list"></div>
+      </section>
+
+      <section>
+        <div class="section-title-row">
+          <h2>즐겨찾기</h2>
+        </div>
+        <div id="favoriteList" class="favorite-list empty">저장한 키워드가 없습니다.</div>
+      </section>
+    </main>
+  </div>
+
+  <div id="detailModal" class="modal hidden" aria-hidden="true">
+    <div class="modal-backdrop" id="modalBackdrop"></div>
+    <div class="modal-content">
+      <button id="closeModalBtn" class="close-btn">✕</button>
+      <p id="detailCategory" class="detail-category"></p>
+      <h3 id="detailKeyword"></h3>
+      <p id="detailRank" class="detail-rank"></p>
+      <div class="summary-box">
+        <p class="summary-title">AI 요약</p>
+        <p id="detailSummary"></p>
+      </div>
+      <div class="summary-box">
+        <p class="summary-title">왜 뜨는지</p>
+        <ul id="detailReasons" class="reasons"></ul>
+      </div>
+      <div class="modal-actions">
+        <button id="detailFavoriteBtn" class="primary-btn">즐겨찾기</button>
+        <button id="copyBtn" class="ghost-btn">키워드 복사</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
