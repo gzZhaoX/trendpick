@@ -21,8 +21,8 @@ CATEGORY_FEEDS = {
     "정치": "https://news.google.com/rss/headlines/section/topic/POLITICS?hl=ko&gl=KR&ceid=KR:ko",
     "경제": "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=ko&gl=KR&ceid=KR:ko",
     "스포츠": "https://news.google.com/rss/headlines/section/topic/SPORTS?hl=ko&gl=KR&ceid=KR:ko",
-    "연예": "https://news.google.com/rss/search?q=연예 when:1d&hl=ko&gl=KR&ceid=KR:ko",
-    "게임": "https://news.google.com/rss/search?q=게임 when:1d&hl=ko&gl=KR&ceid=KR:ko",
+    "연예": "https://news.google.com/rss/search?q=연예 OR 배우 OR 가수 OR 드라마 OR 영화 OR 아이돌 when:1d&hl=ko&gl=KR&ceid=KR:ko",
+    "게임": "https://news.google.com/rss/search?q=게임 OR 모바일게임 OR 닌텐도 OR 스팀 OR 플레이스테이션 when:1d&hl=ko&gl=KR&ceid=KR:ko",
 }
 
 STOPWORDS = {
@@ -50,8 +50,16 @@ CATEGORY_HINTS = {
     "정치": {"대통령", "국회", "정부", "총리", "장관", "여당", "야당", "선거", "외교", "정상회담"},
     "경제": {"환율", "증시", "주가", "금리", "반도체", "부동산", "코스피", "코스닥", "달러", "유가"},
     "스포츠": {"축구", "야구", "농구", "배구", "골프", "손흥민", "이강인", "챔피언스리그", "월드컵", "올림픽"},
-    "연예": {"배우", "가수", "드라마", "영화", "예능", "컴백", "아이돌", "공연", "앨범"},
+    "연예": {"배우", "가수", "드라마", "영화", "예능", "컴백", "아이돌", "공연", "앨범", "방탄소년단", "블랙핑크"},
     "게임": {"게임", "모바일게임", "닌텐도", "스팀", "패치", "업데이트", "출시", "확률형", "플레이스테이션"},
+}
+
+CATEGORY_REQUIRED_HINTS = {
+    "연예": {"배우", "가수", "드라마", "영화", "예능", "컴백", "아이돌", "공연", "앨범", "방탄소년단", "블랙핑크"},
+    "게임": {"게임", "모바일게임", "닌텐도", "스팀", "패치", "업데이트", "출시", "플레이스테이션"},
+    "스포츠": {"축구", "야구", "농구", "배구", "골프", "손흥민", "이강인", "챔피언스리그", "월드컵", "올림픽"},
+    "경제": {"환율", "증시", "주가", "금리", "반도체", "부동산", "코스피", "코스닥", "달러", "유가"},
+    "정치": {"대통령", "국회", "정부", "총리", "장관", "여당", "야당", "선거", "외교", "정상회담"},
 }
 
 def clean_token(token: str) -> str:
@@ -81,10 +89,16 @@ def pick_candidates(title: str) -> list[str]:
 
     return tokens
 
-def choose_keyword(title: str) -> str | None:
+def choose_keyword(title: str, requested_category: str) -> str | None:
     candidates = pick_candidates(title)
     if not candidates:
         return None
+
+    if requested_category in CATEGORY_REQUIRED_HINTS:
+        hints = CATEGORY_REQUIRED_HINTS[requested_category]
+        prioritized = [w for w in candidates if w in hints]
+        if prioritized:
+            return prioritized[0]
 
     preferred = [
         w for w in candidates
@@ -93,10 +107,7 @@ def choose_keyword(title: str) -> str | None:
 
     return preferred[0] if preferred else candidates[0]
 
-def detect_category(keyword: str, titles: list[str], fallback: str) -> str:
-    if fallback != "전체":
-        return fallback
-
+def detect_category_for_all(keyword: str, titles: list[str]) -> str:
     merged = f"{keyword} " + " ".join(titles[:3])
     for category, hints in CATEGORY_HINTS.items():
         for hint in hints:
@@ -104,9 +115,22 @@ def detect_category(keyword: str, titles: list[str], fallback: str) -> str:
                 return category
     return "일반"
 
+def category_match_score(category: str, keyword: str, titles: list[str]) -> int:
+    if category == "전체":
+        return 1
+
+    hints = CATEGORY_REQUIRED_HINTS.get(category, set())
+    text = f"{keyword} " + " ".join(titles[:3])
+
+    score = 0
+    for hint in hints:
+        if hint in text:
+            score += 1
+    return score
+
 def build_summary(keyword: str, titles: list[str]) -> str:
     if not titles:
-        return f"{keyword} 관련 보도가 이어지고 있습니다."
+        return f"{keyword} 관련 이슈가 이어지고 있습니다."
 
     title = split_main_title(titles[0])
     if len(title) > 44:
@@ -157,7 +181,7 @@ def get_trends(
             link = item["link"]
             pub_date = item["pubDate"]
 
-            keyword = choose_keyword(title)
+            keyword = choose_keyword(title, category)
             if not keyword:
                 continue
 
@@ -171,7 +195,6 @@ def get_trends(
                     "pubDate": pub_date
                 })
 
-            # 위에 나오는 기사일수록 가중치 높게
             score = max(1, 12 - min(idx, 11))
             grouped_scores[keyword] += score
 
@@ -183,12 +206,18 @@ def get_trends(
             if len(keyword) <= 2 and score < 6:
                 continue
 
+            match_score = category_match_score(category, keyword, titles)
+            if category != "전체" and match_score == 0:
+                continue
+
             ranked.append({
                 "keyword": keyword,
-                "score": score,
+                "score": score + (match_score * 5),
                 "titles": titles,
                 "links": links
             })
+
+        ranked.sort(key=lambda x: x["score"], reverse=True)
 
         data = []
         prev_score = None
@@ -205,11 +234,13 @@ def get_trends(
                 delta = max(0, prev_score - score)
             prev_score = score
 
+            final_category = category if category != "전체" else detect_category_for_all(keyword, titles)
+
             data.append({
                 "keyword": keyword,
                 "rank": rank,
                 "delta": delta,
-                "category": detect_category(keyword, titles, category),
+                "category": final_category,
                 "summary": build_summary(keyword, titles),
                 "headlines": titles,
                 "links": links
@@ -224,7 +255,7 @@ def get_trends(
                 "keyword": "데이터 없음",
                 "rank": 1,
                 "delta": 0,
-                "category": "기타",
+                "category": category if category != "전체" else "기타",
                 "summary": "표시할 키워드가 없습니다.",
                 "headlines": [],
                 "links": []
@@ -237,7 +268,7 @@ def get_trends(
             "keyword": "데이터 없음",
             "rank": 1,
             "delta": 0,
-            "category": "기타",
+            "category": category if category != "전체" else "기타",
             "summary": f"오류 발생: {str(e)}",
             "headlines": [],
             "links": []
