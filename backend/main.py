@@ -37,13 +37,16 @@ STOPWORDS = {
     "문화일보", "한경", "연합", "뉴스1", "KBS", "MBC", "SBS",
     "JTBC", "채널A", "MBN", "YTN", "TV조선", "세계일보",
     "헤럴드경제", "파이낸셜뉴스", "전자신문", "스포츠조선",
-    "스포츠서울", "스포티비", "OSEN", "텐아시아", "스타뉴스"
+    "스포츠서울", "스포티비", "OSEN", "텐아시아", "스타뉴스",
 }
 
 BANNED_KEYWORDS = {
     "결국", "만에", "가운데", "논란", "관련", "속보", "단독",
-    "가능성", "위험", "우려", "정부", "미국", "한국", "중국",
-    "일본", "세계", "영상", "사진", "기자", "종합"
+    "가능성", "위험", "우려", "세계", "영상", "사진", "기자", "종합",
+    "출시", "게임", "게임에", "업데이트", "소식", "화제", "관심", "주목",
+    "보도", "기사", "이란", "미국", "정부", "한국", "중국", "일본",
+    "대한민국", "이번", "오늘의", "오늘도", "최근", "당시", "현재",
+    "위메이드에", "드라마에", "영화에", "배우가", "가수가"
 }
 
 CATEGORY_HINTS = {
@@ -51,21 +54,37 @@ CATEGORY_HINTS = {
     "경제": {"환율", "증시", "주가", "금리", "반도체", "부동산", "코스피", "코스닥", "달러", "유가"},
     "스포츠": {"축구", "야구", "농구", "배구", "골프", "손흥민", "이강인", "챔피언스리그", "월드컵", "올림픽"},
     "연예": {"배우", "가수", "드라마", "영화", "예능", "컴백", "아이돌", "공연", "앨범", "방탄소년단", "블랙핑크"},
-    "게임": {"게임", "모바일게임", "닌텐도", "스팀", "패치", "업데이트", "출시", "확률형", "플레이스테이션"},
+    "게임": {"게임", "모바일게임", "닌텐도", "스팀", "패치", "업데이트", "출시", "플레이스테이션", "위메이드", "넥슨", "엔씨", "크래프톤"},
 }
 
 CATEGORY_REQUIRED_HINTS = {
-    "연예": {"배우", "가수", "드라마", "영화", "예능", "컴백", "아이돌", "공연", "앨범", "방탄소년단", "블랙핑크"},
-    "게임": {"게임", "모바일게임", "닌텐도", "스팀", "패치", "업데이트", "출시", "플레이스테이션"},
-    "스포츠": {"축구", "야구", "농구", "배구", "골프", "손흥민", "이강인", "챔피언스리그", "월드컵", "올림픽"},
-    "경제": {"환율", "증시", "주가", "금리", "반도체", "부동산", "코스피", "코스닥", "달러", "유가"},
     "정치": {"대통령", "국회", "정부", "총리", "장관", "여당", "야당", "선거", "외교", "정상회담"},
+    "경제": {"환율", "증시", "주가", "금리", "반도체", "부동산", "코스피", "코스닥", "달러", "유가"},
+    "스포츠": {"축구", "야구", "농구", "배구", "골프", "손흥민", "이강인", "챔피언스리그", "월드컵", "올림픽"},
+    "연예": {"배우", "가수", "드라마", "영화", "예능", "컴백", "아이돌", "공연", "앨범", "방탄소년단", "블랙핑크"},
+    "게임": {"게임", "모바일게임", "닌텐도", "스팀", "패치", "업데이트", "출시", "플레이스테이션", "위메이드", "넥슨", "엔씨", "크래프톤"},
 }
+
+COMMON_SUFFIXES = [
+    "에서", "으로", "에게", "한테", "처럼", "보다", "까지", "부터",
+    "만의", "만을", "만이", "만에", "으로의", "과의", "와의",
+    "에서의", "에게서", "에는", "에서는", "으로는",
+    "이다", "였다", "한다", "했다", "됐다", "된다",
+    "으로", "에게", "과", "와", "은", "는", "이", "가", "을", "를", "에", "의"
+]
 
 def clean_token(token: str) -> str:
     token = token.strip()
     token = re.sub(r"[\[\]\(\)\{\}<>\"'“”‘’.,!?…:;|/\\]", "", token)
     return token
+
+def strip_suffixes(word: str) -> str:
+    original = word
+    for suffix in sorted(COMMON_SUFFIXES, key=len, reverse=True):
+        if len(word) > len(suffix) + 1 and word.endswith(suffix):
+            word = word[: -len(suffix)]
+            break
+    return word if len(word) >= 2 else original
 
 def split_main_title(title: str) -> str:
     title = re.sub(r"\s+", " ", title).strip()
@@ -79,6 +98,8 @@ def pick_candidates(title: str) -> list[str]:
     tokens = []
     for raw in raw_tokens:
         word = clean_token(raw)
+        word = strip_suffixes(word)
+
         if len(word) < 2:
             continue
         if word in STOPWORDS or word in BANNED_KEYWORDS:
@@ -94,15 +115,20 @@ def choose_keyword(title: str, requested_category: str) -> str | None:
     if not candidates:
         return None
 
+    # 탭별 우선 키워드
     if requested_category in CATEGORY_REQUIRED_HINTS:
         hints = CATEGORY_REQUIRED_HINTS[requested_category]
         prioritized = [w for w in candidates if w in hints]
         if prioritized:
             return prioritized[0]
 
+    # 너무 일반적인 단어 제외 후 첫 후보 선택
     preferred = [
         w for w in candidates
-        if len(w) >= 2 and w not in {"이란", "미국", "정부", "후티", "이스라엘"}
+        if w not in {
+            "관련", "논란", "우려", "가능성", "관심", "주목", "예정",
+            "이번", "최근", "현재", "국내", "해외"
+        }
     ]
 
     return preferred[0] if preferred else candidates[0]
@@ -130,12 +156,29 @@ def category_match_score(category: str, keyword: str, titles: list[str]) -> int:
 
 def build_summary(keyword: str, titles: list[str]) -> str:
     if not titles:
-        return f"{keyword} 관련 이슈가 이어지고 있습니다."
+        return f"{keyword} 관련 뉴스가 주목받고 있습니다."
 
-    title = split_main_title(titles[0])
-    if len(title) > 44:
-        title = title[:44] + "..."
-    return f"{keyword} 관련 이슈가 이어지고 있습니다. 예: {title}"
+    title = split_main_title(titles[0]).strip()
+
+    if len(title) > 54:
+        title = title[:54] + "..."
+
+    if keyword in {"환율", "증시", "주가", "금리", "달러", "유가"}:
+        return f"{title} 영향으로 관련 검색이 늘었습니다."
+
+    if keyword in {"대통령", "국회", "정부", "장관", "총리", "외교", "선거", "트럼프"}:
+        return f"{title} 보도로 이 키워드가 많이 언급됐습니다."
+
+    if keyword in {"축구", "야구", "농구", "배구", "골프", "손흥민", "이강인", "챔피언스리그"}:
+        return f"{title} 경기·결과 소식으로 관심이 높아졌습니다."
+
+    if keyword in {"배우", "가수", "드라마", "영화", "아이돌", "컴백"}:
+        return f"{title} 관련 화제로 주목받고 있습니다."
+
+    if keyword in {"위메이드", "넥슨", "엔씨", "크래프톤", "닌텐도", "스팀", "플레이스테이션"}:
+        return f"{title} 소식으로 관심이 커졌습니다."
+
+    return f"{title} 보도로 관심이 커졌습니다."
 
 def parse_feed(url: str):
     res = requests.get(url, timeout=12)
