@@ -3,18 +3,18 @@ const API_BASE = "https://trendpick-api.onrender.com";
 const SAMPLE_TRENDS = [
   {
     rank: 1,
-    keyword: "환율",
-    category: "경제",
-    summary: "환율 변동 기사와 해외 증시 이슈가 겹치며 관심이 커졌습니다.",
-    headlines: ["원달러 환율 변동성 확대", "해외 증시 불안에 환율 관심 증가"],
+    keyword: "트럼프, 호르무즈 해협 명칭 변경 검토",
+    category: "정치",
+    summary: "트럼프, 호르무즈 해협 명칭 변경 검토",
+    headlines: ["트럼프, 호르무즈 해협 명칭 변경 검토"],
     links: []
   },
   {
     rank: 2,
-    keyword: "챔피언스리그",
-    category: "스포츠",
-    summary: "유럽 축구 주요 경기 결과와 하이라이트 확산으로 검색이 늘었습니다.",
-    headlines: ["챔피언스리그 8강 확정", "빅매치 하이라이트 화제"],
+    keyword: "닌텐도, 스위치2 생산 줄인다…미국 수요 부진",
+    category: "게임",
+    summary: "닌텐도, 스위치2 생산 줄인다…미국 수요 부진",
+    headlines: ["닌텐도, 스위치2 생산 줄인다…미국 수요 부진"],
     links: []
   }
 ];
@@ -144,10 +144,10 @@ function normalizeServerData(data) {
   if (!Array.isArray(data)) return [];
   return data.map((item, index) => ({
     rank: item.rank ?? index + 1,
-    keyword: item.keyword ?? `키워드 ${index + 1}`,
+    keyword: item.keyword ?? `이슈 ${index + 1}`,
     delta: item.delta ?? 0,
     category: item.category ?? "일반",
-    summary: item.summary ?? "실시간 키워드입니다.",
+    summary: item.summary ?? item.keyword ?? "실시간 이슈입니다.",
     headlines: Array.isArray(item.headlines) ? item.headlines : [],
     links: Array.isArray(item.links) ? item.links : []
   }));
@@ -159,7 +159,7 @@ function renderCurrentList() {
 
 function renderList(items) {
   if (!items.length) {
-    el.list.innerHTML = '<div class="empty">보여줄 키워드가 없어요.</div>';
+    el.list.innerHTML = '<div class="empty">보여줄 이슈가 없어요.</div>';
     return;
   }
 
@@ -169,26 +169,38 @@ function renderList(items) {
     const article = document.createElement("article");
     article.className = "trend-item";
 
+    const detailTitle = item.summary || item.keyword;
     const previewHeadlines = (item.headlines || []).slice(0, 2);
-    const deltaText = item.delta > 0 ? `+${item.delta}` : "-";
+
+    const previewHtml = previewHeadlines.length
+      ? `
+        <div class="headline-preview" style="margin-top:12px;">
+          ${previewHeadlines.map((h) => `
+            <div class="preview-item" style="margin:7px 0; opacity:0.88; line-height:1.45;">
+              • ${escapeHtml(h)}
+            </div>
+          `).join("")}
+        </div>
+      `
+      : "";
 
     article.innerHTML = `
       <div class="trend-top">
         <div class="rank-badge">${item.rank}</div>
         <div class="trend-main">
           <div class="trend-title-row">
-            <div class="trend-title">${escapeHtml(item.keyword)}</div>
+            <div class="trend-title" style="font-size:32px; line-height:1.35; font-weight:800;">
+              ${escapeHtml(item.keyword)}
+            </div>
             <div class="chip">${escapeHtml(item.category)}</div>
           </div>
-          <div style="margin-top:6px; font-size:12px; opacity:0.72;">변동 ${deltaText}</div>
-          <p class="summary">${escapeHtml(item.summary)}</p>
-          <div class="headline-preview" style="margin-top:10px;">
-            ${previewHeadlines.map((h) => `
-              <div class="preview-item" style="margin:6px 0; opacity:0.92;">
-                • ${escapeHtml(h)}
-              </div>
-            `).join("")}
-          </div>
+
+          <p class="summary" style="margin-top:12px; line-height:1.55; font-size:16px;">
+            ${escapeHtml(detailTitle)}
+          </p>
+
+          ${previewHtml}
+
           <div class="item-actions">
             <button class="action-btn" data-action="detail">자세히</button>
             <button class="action-btn" data-action="favorite">${state.favorites.includes(item.keyword) ? "★ 저장됨" : "☆ 저장"}</button>
@@ -208,15 +220,27 @@ function openDetail(item) {
   state.selected = item;
   el.detailRank.textContent = `${item.rank}위 · ${item.category}`;
   el.detailKeyword.textContent = item.keyword;
-  el.detailSummary.textContent = item.summary;
+  el.detailSummary.textContent = item.summary || item.keyword;
 
   if (item.links && item.links.length) {
     el.detailLinks.innerHTML = item.links.map((link, index) => `
       <a class="link-item" href="${link.url}" target="_blank" rel="noopener noreferrer"
-         style="display:block; padding:12px; margin:10px 0; border:1px solid rgba(255,255,255,0.12); border-radius:14px; text-decoration:none; color:inherit;">
-        <div style="font-weight:700; margin-bottom:6px;">${index + 1}. ${escapeHtml(link.title || link.url)}</div>
-        <div style="font-size:13px; opacity:0.75;">${escapeHtml(link.source || "뉴스")} ${link.pubDate ? "· " + escapeHtml(link.pubDate) : ""}</div>
+         style="display:block; padding:14px; margin:10px 0; border:1px solid rgba(255,255,255,0.12); border-radius:14px; text-decoration:none; color:inherit;">
+        <div style="font-weight:700; margin-bottom:6px; line-height:1.45;">
+          ${index + 1}. ${escapeHtml(link.title || link.url)}
+        </div>
+        <div style="font-size:13px; opacity:0.75;">
+          ${escapeHtml(link.source || "Google News")}
+        </div>
       </a>
+    `).join("");
+  } else if (item.headlines && item.headlines.length) {
+    el.detailLinks.innerHTML = item.headlines.map((headline, index) => `
+      <div style="padding:14px; margin:10px 0; border:1px solid rgba(255,255,255,0.12); border-radius:14px;">
+        <div style="font-weight:700; line-height:1.45;">
+          ${index + 1}. ${escapeHtml(headline)}
+        </div>
+      </div>
     `).join("");
   } else {
     el.detailLinks.innerHTML = '<div class="empty">현재 연결된 기사 정보가 없어요.</div>';
@@ -241,7 +265,7 @@ function closeFavorites() {
 
 function renderFavorites() {
   if (!state.favorites.length) {
-    el.favoriteList.innerHTML = '<div class="empty">저장한 키워드가 아직 없어요.</div>';
+    el.favoriteList.innerHTML = '<div class="empty">저장한 이슈가 아직 없어요.</div>';
     return;
   }
 
@@ -251,7 +275,7 @@ function renderFavorites() {
     return `
       <div class="favorite-item" data-key="${escapeHtml(keyword)}">
         <div>${escapeHtml(keyword)}</div>
-        <div class="favorite-meta">${escapeHtml(item ? item.summary : "현재 목록에는 없지만 저장된 키워드입니다.")}</div>
+        <div class="favorite-meta">${escapeHtml(item ? (item.summary || item.keyword) : "현재 목록에는 없지만 저장된 이슈입니다.")}</div>
       </div>
     `;
   }).join("");
@@ -377,7 +401,8 @@ function bindEvents() {
 
   el.shareBtn.addEventListener("click", async () => {
     if (!state.selected) return;
-    const text = `${state.selected.keyword} - ${state.selected.summary}`;
+
+    const text = `${state.selected.keyword}`;
 
     try {
       if (navigator.share) {
@@ -387,7 +412,7 @@ function bindEvents() {
         });
       } else {
         await navigator.clipboard.writeText(text);
-        alert("요약을 복사했어요.");
+        alert("제목을 복사했어요.");
       }
     } catch {}
   });
