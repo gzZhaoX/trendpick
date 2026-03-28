@@ -26,15 +26,22 @@ STOPWORDS = {
     "한겨레", "경향신문", "한국경제", "매일경제", "서울신문",
     "머니투데이", "이데일리", "아시아경제", "노컷뉴스",
     "문화일보", "한경", "연합", "뉴스1", "KBS", "MBC", "SBS",
-    "JTBC", "채널A", "MBN", "YTN", "TV조선"
+    "JTBC", "채널A", "MBN", "YTN", "TV조선",
+    "공습에", "관련해", "보도에", "속에서", "가운데", "통해",
+    "대해서", "논의", "우려", "가능성", "결국", "만에", "위험"
+}
+
+BANNED_KEYWORDS = {
+    "결국", "만에", "위험", "가능성", "가운데", "관련", "속보",
+    "단독", "정부", "미국", "한국", "중국", "일본", "세계"
 }
 
 CATEGORY_RULES = {
-    "정치": {"대통령", "국회", "정부", "총리", "장관", "여당", "야당", "외교", "선거"},
-    "경제": {"환율", "증시", "주가", "금리", "반도체", "부동산", "코스피", "코스닥", "달러"},
-    "스포츠": {"야구", "축구", "농구", "배구", "골프", "월드컵", "올림픽", "챔피언스리그", "손흥민"},
-    "연예": {"아이돌", "가수", "배우", "드라마", "영화", "컴백", "예능", "공연"},
-    "게임": {"게임", "모바일게임", "닌텐도", "플레이스테이션", "스팀", "출시", "업데이트"},
+    "정치": {"대통령", "국회", "정부", "총리", "장관", "여당", "야당", "외교", "선거", "정상회담"},
+    "경제": {"환율", "증시", "주가", "금리", "반도체", "부동산", "코스피", "코스닥", "달러", "유가"},
+    "스포츠": {"야구", "축구", "농구", "배구", "골프", "월드컵", "올림픽", "챔피언스리그", "손흥민", "이강인"},
+    "연예": {"아이돌", "가수", "배우", "드라마", "영화", "컴백", "예능", "공연", "방탄소년단", "블랙핑크"},
+    "게임": {"게임", "모바일게임", "닌텐도", "플레이스테이션", "스팀", "출시", "업데이트", "확률", "패치"}
 }
 
 def clean_token(token: str) -> str:
@@ -42,7 +49,15 @@ def clean_token(token: str) -> str:
     token = re.sub(r"[\[\]\(\)\{\}<>\"'“”‘’.,!?…:;|/\\]", "", token)
     return token
 
-def pick_keyword(title: str) -> str | None:
+def classify_category(keyword: str, titles: list[str]) -> str:
+    text = f"{keyword} " + " ".join(titles[:3])
+    for category, words in CATEGORY_RULES.items():
+        for w in words:
+            if w in text:
+                return category
+    return "일반"
+
+def pick_keyword_candidates(title: str) -> list[str]:
     title = re.sub(r"\s+", " ", title).strip()
     parts = [p.strip() for p in title.split(" - ") if p.strip()]
     main_text = parts[0] if parts else title
@@ -54,41 +69,34 @@ def pick_keyword(title: str) -> str | None:
             continue
         if word in STOPWORDS:
             continue
+        if word in BANNED_KEYWORDS:
+            continue
         if re.fullmatch(r"\d+", word):
             continue
         candidates.append(word)
 
+    return candidates
+
+def choose_best_keyword(title: str) -> str | None:
+    candidates = pick_keyword_candidates(title)
     if not candidates:
         return None
 
-    preferred = [
+    strong = [
         w for w in candidates
-        if len(w) >= 2
-        and w not in {"관련", "우려", "논란", "결국", "만에", "위험", "가능성", "급증", "확산"}
+        if len(w) >= 2 and w not in {"후티", "미군", "이스라엘", "이란"}
     ]
-
-    if preferred:
-        return preferred[0]
+    if strong:
+        return strong[0]
 
     return candidates[0]
 
-def classify_category(keyword: str, title: str) -> str:
-    text = f"{keyword} {title}"
-    for category, words in CATEGORY_RULES.items():
-        for w in words:
-            if w in text:
-                return category
-    return "일반"
-
 def build_summary(keyword: str, titles: list[str]) -> str:
     if not titles:
-        return f"{keyword} 관련 뉴스가 늘었습니다."
-
+        return f"{keyword} 관련 보도가 이어지고 있습니다."
     top_title = titles[0]
-
-    if len(top_title) > 46:
-        top_title = top_title[:46] + "..."
-
+    if len(top_title) > 52:
+        top_title = top_title[:52] + "..."
     return f"{keyword} 관련 보도가 이어지고 있습니다. 예: {top_title}"
 
 @app.get("/")
@@ -106,7 +114,6 @@ def get_trends():
 
         grouped_titles = defaultdict(list)
         grouped_links = defaultdict(list)
-        grouped_category = {}
 
         for item in root.findall(".//item"):
             title = (item.findtext("title", default="") or "").strip()
@@ -115,7 +122,7 @@ def get_trends():
             if not title:
                 continue
 
-            keyword = pick_keyword(title)
+            keyword = choose_best_keyword(title)
             if not keyword:
                 continue
 
@@ -128,28 +135,39 @@ def get_trends():
                     "source": "Google News"
                 })
 
-            if keyword not in grouped_category:
-                grouped_category[keyword] = classify_category(keyword, title)
-
         counts = Counter({k: len(v) for k, v in grouped_titles.items()})
 
         data = []
         rank = 1
+        used_categories = Counter()
 
-        for keyword, _ in counts.most_common(20):
+        for keyword, count in counts.most_common(50):
             titles = grouped_titles[keyword][:3]
             links = grouped_links[keyword][:5]
+            category = classify_category(keyword, titles)
+
+            # 같은 카테고리가 너무 많이 연속으로 나오지 않게 약간 제한
+            if used_categories[category] >= 6 and category != "일반":
+                continue
+
+            # 너무 약한 키워드 제거
+            if count < 2 and len(keyword) <= 2:
+                continue
 
             data.append({
                 "keyword": keyword,
                 "rank": rank,
                 "delta": 0,
-                "category": grouped_category.get(keyword, "일반"),
+                "category": category,
                 "summary": build_summary(keyword, titles),
                 "headlines": titles,
                 "links": links
             })
+            used_categories[category] += 1
             rank += 1
+
+            if rank > 20:
+                break
 
         if not data:
             data = [{
