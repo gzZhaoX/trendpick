@@ -4,8 +4,8 @@
   "description": "아이폰 홈 화면에 추가해서 쓰는 실시간 키워드 웹앱",
   "start_url": "./index.html",
   "display": "standalone",
-  "background_color": "#0f172a",
-  "theme_color": "#111827",
+  "background_color": "#07111f",
+  "theme_color": "#0b1220",
   "lang": "ko",
   "icons": [
     {

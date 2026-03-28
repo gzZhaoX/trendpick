@@ -3,7 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <meta name="theme-color" content="#111827" />
+  <meta name="theme-color" content="#0b1220" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>트렌드픽</title>
   <link rel="manifest" href="manifest.json" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
@@ -13,62 +15,85 @@
   <div class="app-shell">
     <header class="topbar">
       <div>
-        <p class="eyebrow">홈 화면에 추가해서 사용</p>
+        <p class="eyebrow">아이폰 홈 화면 웹앱</p>
         <h1>트렌드픽</h1>
       </div>
-      <button id="refreshBtn" class="ghost-btn">새로고침</button>
+      <div class="top-actions">
+        <button id="refreshBtn" class="ghost-btn">새로고침</button>
+      </div>
     </header>
 
-    <section class="status-card">
-      <div>
-        <p class="label">업데이트 시간</p>
-        <p id="updatedAt" class="value">-</p>
+    <section class="hero-card">
+      <div class="hero-copy">
+        <p class="hero-title">지금 뜨는 이슈를 빠르게 확인</p>
+        <p class="hero-subtitle">실시간 뉴스 RSS를 읽어 키워드를 자동 추출합니다. 연결이 안 될 때는 마지막 저장 데이터나 샘플 데이터를 보여줘요.</p>
       </div>
-      <div>
-        <p class="label">저장한 키워드</p>
-        <p id="favoriteCount" class="value">0개</p>
+      <div class="hero-meta">
+        <div>
+          <p class="label">업데이트 시간</p>
+          <p id="updatedAt" class="value">불러오는 중...</p>
+        </div>
+        <div>
+          <p class="label">데이터 상태</p>
+          <p id="sourceState" class="value">준비 중</p>
+        </div>
       </div>
     </section>
 
-    <nav class="tabs" id="categoryTabs"></nav>
+    <section class="toolbar">
+      <div id="categoryTabs" class="tabs"></div>
+      <div class="search-wrap">
+        <input id="searchInput" type="search" placeholder="키워드 검색" />
+      </div>
+    </section>
 
-    <main>
-      <section>
-        <div class="section-title-row">
-          <h2>실시간 키워드</h2>
-          <span id="currentCategoryLabel" class="chip">전체</span>
-        </div>
-        <div id="trendList" class="trend-list"></div>
-      </section>
+    <section class="section-header">
+      <h2>실시간 키워드</h2>
+      <button id="showFavoritesBtn" class="text-btn">즐겨찾기</button>
+    </section>
 
-      <section>
-        <div class="section-title-row">
-          <h2>즐겨찾기</h2>
-        </div>
-        <div id="favoriteList" class="favorite-list empty">저장한 키워드가 없습니다.</div>
-      </section>
-    </main>
+    <main id="trendList" class="trend-list"></main>
+
+    <section class="tips-card">
+      <h3>안내</h3>
+      <p>뉴스 제공처나 네트워크 상태에 따라 일부 시간에는 실시간 불러오기가 실패할 수 있어요. 그럴 땐 앱이 마지막 성공 데이터를 보여줍니다.</p>
+    </section>
   </div>
 
-  <div id="detailModal" class="modal hidden" aria-hidden="true">
-    <div class="modal-backdrop" id="modalBackdrop"></div>
-    <div class="modal-content">
-      <button id="closeModalBtn" class="close-btn">✕</button>
-      <p id="detailCategory" class="detail-category"></p>
-      <h3 id="detailKeyword"></h3>
-      <p id="detailRank" class="detail-rank"></p>
-      <div class="summary-box">
-        <p class="summary-title">AI 요약</p>
+  <div id="detailSheet" class="sheet hidden" aria-hidden="true">
+    <div class="sheet-backdrop" id="sheetBackdrop"></div>
+    <div class="sheet-panel">
+      <div class="sheet-handle"></div>
+      <div class="sheet-header">
+        <div>
+          <p id="detailRank" class="sheet-rank"></p>
+          <h3 id="detailKeyword"></h3>
+        </div>
+        <button id="closeDetailBtn" class="ghost-btn small">닫기</button>
+      </div>
+      <div class="sheet-summary">
         <p id="detailSummary"></p>
       </div>
-      <div class="summary-box">
-        <p class="summary-title">왜 뜨는지</p>
-        <ul id="detailReasons" class="reasons"></ul>
+      <div class="sheet-actions">
+        <button id="favoriteBtn" class="ghost-btn small">즐겨찾기</button>
+        <button id="shareBtn" class="ghost-btn small">공유</button>
       </div>
-      <div class="modal-actions">
-        <button id="detailFavoriteBtn" class="primary-btn">즐겨찾기</button>
-        <button id="copyBtn" class="ghost-btn">키워드 복사</button>
+      <section class="sheet-section">
+        <h4>연결된 기사</h4>
+        <div id="detailLinks" class="link-list"></div>
+      </section>
+    </div>
+  </div>
+
+  <div id="favoritesSheet" class="sheet hidden" aria-hidden="true">
+    <div class="sheet-backdrop" id="favoritesBackdrop"></div>
+    <div class="sheet-panel">
+      <div class="sheet-handle"></div>
+      <div class="sheet-header">
+        <h3>즐겨찾기</h3>
+        <button id="closeFavoritesBtn" class="ghost-btn small">닫기</button>
       </div>
+      <div id="favoriteList" class="favorite-list"></div>
     </div>
   </div>
 
