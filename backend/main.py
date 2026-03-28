@@ -10,7 +10,10 @@ def get_trends():
     try:
         url = "https://news.google.com/rss?hl=ko&gl=KR&ceid=KR:ko"
         res = requests.get(url)
-        words = re.findall(r"[가-힣]{2,}", res.text)
+res.encoding = 'utf-8'
+text = res.text
+
+words = re.findall(r"[가-힣]{2,}", text)
         counter = Counter(words)
 
         data = []
