@@ -16,22 +16,6 @@ const SAMPLE_TRENDS = [
     summary: "유럽 축구 주요 경기 결과와 하이라이트 확산으로 검색이 늘었습니다.",
     headlines: ["챔피언스리그 8강 확정", "빅매치 하이라이트 화제"],
     links: []
-  },
-  {
-    rank: 3,
-    keyword: "미세먼지",
-    category: "전체",
-    summary: "대기질 예보와 외출 전 확인 수요가 겹치며 다시 검색량이 올랐습니다.",
-    headlines: ["전국 초미세먼지 농도 상승", "주말 미세먼지 예보 관심"],
-    links: []
-  },
-  {
-    rank: 4,
-    keyword: "신작 모바일게임",
-    category: "게임",
-    summary: "신작 출시와 사전예약 보상 소식이 퍼지며 관심이 모였습니다.",
-    headlines: ["모바일 신작 출시 예고", "사전예약 보상 공개"],
-    links: []
   }
 ];
 
@@ -83,6 +67,10 @@ function loadCache(key) {
   }
 }
 
+function cacheKeyForCategory(category) {
+  return `trendpick-last-success-${category}`;
+}
+
 function loadFavorites() {
   return loadCache("trendpick-favorites") || [];
 }
@@ -117,7 +105,8 @@ function renderTabs() {
     btn.addEventListener("click", () => {
       state.category = name;
       renderTabs();
-      renderCurrentList();
+      showCachedOrSampleImmediately();
+      fetchAndRender();
     });
     el.tabs.appendChild(btn);
   });
@@ -131,17 +120,7 @@ function renderStatus(kind) {
     sample: "샘플 데이터",
     updating: "업데이트 중"
   };
-
   el.sourceState.textContent = map[kind] || kind;
-}
-
-function setLoadingMessage() {
-  el.list.innerHTML = '<div class="loading-card">실시간 키워드를 불러오는 중...</div>';
-}
-
-function filterByCategory(items) {
-  if (state.category === "전체") return items;
-  return items.filter((item) => (item.category || "전체") === state.category);
 }
 
 function filterBySearch(items) {
@@ -163,10 +142,10 @@ function filterBySearch(items) {
 
 function normalizeServerData(data) {
   if (!Array.isArray(data)) return [];
-
   return data.map((item, index) => ({
     rank: item.rank ?? index + 1,
     keyword: item.keyword ?? `키워드 ${index + 1}`,
+    delta: item.delta ?? 0,
     category: item.category ?? "일반",
     summary: item.summary ?? "실시간 키워드입니다.",
     headlines: Array.isArray(item.headlines) ? item.headlines : [],
@@ -175,8 +154,7 @@ function normalizeServerData(data) {
 }
 
 function renderCurrentList() {
-  const filtered = filterBySearch(filterByCategory(state.trends));
-  renderList(filtered);
+  renderList(filterBySearch(state.trends));
 }
 
 function renderList(items) {
@@ -192,17 +170,7 @@ function renderList(items) {
     article.className = "trend-item";
 
     const previewHeadlines = (item.headlines || []).slice(0, 2);
-    const previewHtml = previewHeadlines.length
-      ? `
-        <div class="headline-preview" style="margin-top:10px;">
-          ${previewHeadlines.map((h) => `
-            <div class="preview-item" style="margin:6px 0; opacity:0.92;">
-              • ${escapeHtml(h)}
-            </div>
-          `).join("")}
-        </div>
-      `
-      : "";
+    const deltaText = item.delta > 0 ? `+${item.delta}` : "-";
 
     article.innerHTML = `
       <div class="trend-top">
@@ -212,8 +180,15 @@ function renderList(items) {
             <div class="trend-title">${escapeHtml(item.keyword)}</div>
             <div class="chip">${escapeHtml(item.category)}</div>
           </div>
+          <div style="margin-top:6px; font-size:12px; opacity:0.72;">변동 ${deltaText}</div>
           <p class="summary">${escapeHtml(item.summary)}</p>
-          ${previewHtml}
+          <div class="headline-preview" style="margin-top:10px;">
+            ${previewHeadlines.map((h) => `
+              <div class="preview-item" style="margin:6px 0; opacity:0.92;">
+                • ${escapeHtml(h)}
+              </div>
+            `).join("")}
+          </div>
           <div class="item-actions">
             <button class="action-btn" data-action="detail">자세히</button>
             <button class="action-btn" data-action="favorite">${state.favorites.includes(item.keyword) ? "★ 저장됨" : "☆ 저장"}</button>
@@ -224,6 +199,7 @@ function renderList(items) {
 
     article.querySelector('[data-action="detail"]').addEventListener("click", () => openDetail(item));
     article.querySelector('[data-action="favorite"]').addEventListener("click", () => toggleFavorite(item.keyword));
+
     el.list.appendChild(article);
   });
 }
@@ -239,14 +215,8 @@ function openDetail(item) {
       <a class="link-item" href="${link.url}" target="_blank" rel="noopener noreferrer"
          style="display:block; padding:12px; margin:10px 0; border:1px solid rgba(255,255,255,0.12); border-radius:14px; text-decoration:none; color:inherit;">
         <div style="font-weight:700; margin-bottom:6px;">${index + 1}. ${escapeHtml(link.title || link.url)}</div>
-        <div class="link-source" style="font-size:13px; opacity:0.75;">${escapeHtml(link.source || "뉴스 링크")}</div>
+        <div style="font-size:13px; opacity:0.75;">${escapeHtml(link.source || "뉴스")} ${link.pubDate ? "· " + escapeHtml(link.pubDate) : ""}</div>
       </a>
-    `).join("");
-  } else if (item.headlines && item.headlines.length) {
-    el.detailLinks.innerHTML = item.headlines.map((headline, index) => `
-      <div style="padding:12px; margin:10px 0; border:1px solid rgba(255,255,255,0.12); border-radius:14px;">
-        <div style="font-weight:700;">${index + 1}. ${escapeHtml(headline)}</div>
-      </div>
     `).join("");
   } else {
     el.detailLinks.innerHTML = '<div class="empty">현재 연결된 기사 정보가 없어요.</div>';
@@ -316,7 +286,7 @@ function toggleFavorite(keyword) {
 }
 
 function showCachedOrSampleImmediately() {
-  const cached = loadCache("trendpick-last-success");
+  const cached = loadCache(cacheKeyForCategory(state.category));
 
   if (cached && Array.isArray(cached.trends) && cached.trends.length) {
     state.trends = cached.trends;
@@ -332,26 +302,22 @@ function showCachedOrSampleImmediately() {
   renderCurrentList();
 }
 
-async function fetchAndRender(showLoadingOnlyWhenEmpty = false) {
+async function fetchAndRender() {
   if (state.isRefreshing) return;
   state.isRefreshing = true;
-
-  if (showLoadingOnlyWhenEmpty && (!state.trends || !state.trends.length)) {
-    setLoadingMessage();
-    el.updatedAt.textContent = "불러오는 중...";
-    renderStatus("loading");
-  } else {
-    renderStatus("updating");
-  }
+  renderStatus("updating");
 
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 15000);
 
-    const response = await fetch(`${API_BASE}/trends`, {
-      cache: "no-store",
-      signal: controller.signal
-    });
+    const response = await fetch(
+      `${API_BASE}/trends?category=${encodeURIComponent(state.category)}&limit=20`,
+      {
+        cache: "no-store",
+        signal: controller.signal
+      }
+    );
 
     clearTimeout(timeoutId);
 
@@ -367,8 +333,7 @@ async function fetchAndRender(showLoadingOnlyWhenEmpty = false) {
     }
 
     state.trends = trends;
-
-    saveCache("trendpick-last-success", {
+    saveCache(cacheKeyForCategory(state.category), {
       updatedAt: Date.now(),
       trends
     });
@@ -377,22 +342,18 @@ async function fetchAndRender(showLoadingOnlyWhenEmpty = false) {
     renderStatus("live");
     renderCurrentList();
   } catch (error) {
-    if (!state.trends || !state.trends.length) {
-      const cached = loadCache("trendpick-last-success");
+    const cached = loadCache(cacheKeyForCategory(state.category));
 
-      if (cached && Array.isArray(cached.trends) && cached.trends.length) {
-        state.trends = cached.trends;
-        el.updatedAt.textContent = formatTime(cached.updatedAt || Date.now());
-        renderStatus("cached");
-        renderCurrentList();
-      } else {
-        state.trends = SAMPLE_TRENDS;
-        el.updatedAt.textContent = formatTime(Date.now());
-        renderStatus("sample");
-        renderCurrentList();
-      }
-    } else {
+    if (cached && Array.isArray(cached.trends) && cached.trends.length) {
+      state.trends = cached.trends;
+      el.updatedAt.textContent = formatTime(cached.updatedAt || Date.now());
       renderStatus("cached");
+      renderCurrentList();
+    } else {
+      state.trends = SAMPLE_TRENDS;
+      el.updatedAt.textContent = formatTime(Date.now());
+      renderStatus("sample");
+      renderCurrentList();
     }
   } finally {
     state.isRefreshing = false;
@@ -400,9 +361,7 @@ async function fetchAndRender(showLoadingOnlyWhenEmpty = false) {
 }
 
 function bindEvents() {
-  el.refreshBtn.addEventListener("click", () => {
-    fetchAndRender(false);
-  });
+  el.refreshBtn.addEventListener("click", () => fetchAndRender());
 
   el.searchInput.addEventListener("input", (e) => {
     state.search = e.target.value;
@@ -413,9 +372,7 @@ function bindEvents() {
   el.sheetBackdrop.addEventListener("click", closeDetail);
 
   el.favoriteBtn.addEventListener("click", () => {
-    if (state.selected) {
-      toggleFavorite(state.selected.keyword);
-    }
+    if (state.selected) toggleFavorite(state.selected.keyword);
   });
 
   el.shareBtn.addEventListener("click", async () => {
@@ -449,4 +406,4 @@ if ("serviceWorker" in navigator) {
 renderTabs();
 bindEvents();
 showCachedOrSampleImmediately();
-fetchAndRender(false);
+fetchAndRender();
