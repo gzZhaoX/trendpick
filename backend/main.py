@@ -1,94 +1,60 @@
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
 import requests
 from collections import Counter
-import xml.etree.ElementTree as ET
+import re
 
 app = FastAPI()
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
-@app.get("/")
-def root():
-    return {"status": "ok", "message": "trendpick api is live"}
-
+# ❌ 제거할 단어들 (핵심)
+STOPWORDS = set([
+    "뉴스", "속보", "단독", "영상", "사진", "기자",
+    "연합뉴스", "뉴시스", "조선일보", "중앙일보", "동아일보",
+    "한겨레", "경향신문", "한국경제", "매일경제", "서울신문",
+    "머니투데이", "이데일리", "아시아경제",
+    "오늘", "지금", "관련", "대한", "이란", "대한민국",
+    "정부", "한국", "미국", "중국", "일본",
+    "사람", "경우", "내용", "결과", "상황",
+    "확인", "진행", "발표", "논란", "이슈"
+])
 
 @app.get("/trends")
 def get_trends():
     try:
         url = "https://news.google.com/rss?hl=ko&gl=KR&ceid=KR:ko"
-        res = requests.get(url, timeout=10)
-        res.raise_for_status()
+        res = requests.get(url)
+        res.encoding = "utf-8"
 
-        root = ET.fromstring(res.content)
+        text = res.text
 
-        titles = []
-        for item in root.findall(".//item"):
-            title = item.findtext("title", default="")
-            if title:
-                titles.append(title)
+        # 한글 2글자 이상 추출
+        words = re.findall(r"[가-힣]{2,}", text)
 
-        blocked_words = {
-            "기자", "뉴스", "오늘", "오후", "오전", "영상", "사진",
-            "속보", "단독", "관련", "구독", "채널", "라이브", "앵커",
-            "정부", "대표", "한국", "대한민국", "조선일보", "연합뉴스",
-            "노컷뉴스", "한겨레", "문화일보", "한국경제", "뉴시스",
-            "서울신문", "동아일보", "중앙일보", "경향신문"
-        }
+        # ❗ 필터링 (핵심)
+        filtered = [
+            w for w in words
+            if w not in STOPWORDS
+            and len(w) >= 2
+        ]
 
-        counter = Counter()
-
-        for title in titles:
-            parts = [p.strip() for p in title.split(" - ") if p.strip()]
-            main_text = parts[0] if parts else title
-
-            for token in main_text.split():
-                word = token.strip("[](){}<>\"'“”‘’.,!?…:;|/\\")
-                if len(word) < 2:
-                    continue
-                if word in blocked_words:
-                    continue
-                counter[word] += 1
+        counter = Counter(filtered)
 
         data = []
-        rank = 1
-
-        for word, _ in counter.most_common(100):
+        for i, (word, _) in enumerate(counter.most_common(20)):
             data.append({
                 "keyword": word,
-                "rank": rank,
+                "rank": i + 1,
                 "delta": 0,
                 "category": "일반",
                 "summary": f"{word} 관련 뉴스 언급이 늘었습니다."
             })
-            rank += 1
-            if rank > 20:
-                break
 
-        if not data:
-            data = [{
-                "keyword": "데이터 없음",
-                "rank": 1,
-                "delta": 0,
-                "category": "기타",
-                "summary": "표시할 키워드가 없습니다."
-            }]
+        return data
 
-        return JSONResponse(content=data)
-
-    except Exception as e:
-        return JSONResponse(content=[{
+    except:
+        return [{
             "keyword": "데이터 없음",
             "rank": 1,
             "delta": 0,
-            "category": "기타",
-            "summary": f"오류 발생: {str(e)}"
-        }])
+            "category": "일반",
+            "summary": "데이터를 불러오지 못했습니다."
+        }]
