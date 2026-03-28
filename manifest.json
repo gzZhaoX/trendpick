@@ -1,20 +1,20 @@
 {
   "name": "트렌드픽",
   "short_name": "트렌드픽",
-  "description": "아이폰 홈 화면에 추가해서 쓰는 실시간 키워드 웹앱",
-  "start_url": "./index.html",
+  "start_url": "./",
   "display": "standalone",
-  "background_color": "#07111f",
-  "theme_color": "#0b1220",
-  "lang": "ko",
+  "background_color": "#0f1115",
+  "theme_color": "#0f1115",
+  "lang": "ko-KR",
+  "description": "실시간 이슈를 앱처럼 보는 PWA",
   "icons": [
     {
-      "src": "icons/icon-192.png",
+      "src": "./icons/icon-192.png",
       "sizes": "192x192",
       "type": "image/png"
     },
     {
-      "src": "icons/icon-512.png",
+      "src": "./icons/icon-512.png",
       "sizes": "512x512",
       "type": "image/png"
     }
