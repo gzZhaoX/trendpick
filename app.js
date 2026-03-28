@@ -1,10 +1,38 @@
 const API_BASE = "https://trendpick-api.onrender.com";
 
 const SAMPLE_TRENDS = [
-  { rank: 1, keyword: "환율", category: "경제", summary: "환율 변동 기사와 해외 증시 이슈가 겹치며 관심이 커졌습니다.", headlines: ["원달러 환율 변동성 확대", "해외 증시 불안에 환율 관심 증가"], links: [] },
-  { rank: 2, keyword: "챔피언스리그", category: "스포츠", summary: "유럽 축구 주요 경기 결과와 하이라이트 확산으로 검색이 늘었습니다.", headlines: ["챔피언스리그 8강 확정", "빅매치 하이라이트 화제"], links: [] },
-  { rank: 3, keyword: "미세먼지", category: "전체", summary: "대기질 예보와 외출 전 확인 수요가 겹치며 다시 검색량이 올랐습니다.", headlines: ["전국 초미세먼지 농도 상승", "주말 미세먼지 예보 관심"], links: [] },
-  { rank: 4, keyword: "신작 모바일게임", category: "게임", summary: "신작 출시와 사전예약 보상 소식이 퍼지며 관심이 모였습니다.", headlines: ["모바일 신작 출시 예고", "사전예약 보상 공개"], links: [] }
+  {
+    rank: 1,
+    keyword: "환율",
+    category: "경제",
+    summary: "환율 변동 기사와 해외 증시 이슈가 겹치며 관심이 커졌습니다.",
+    headlines: ["원달러 환율 변동성 확대", "해외 증시 불안에 환율 관심 증가"],
+    links: []
+  },
+  {
+    rank: 2,
+    keyword: "챔피언스리그",
+    category: "스포츠",
+    summary: "유럽 축구 주요 경기 결과와 하이라이트 확산으로 검색이 늘었습니다.",
+    headlines: ["챔피언스리그 8강 확정", "빅매치 하이라이트 화제"],
+    links: []
+  },
+  {
+    rank: 3,
+    keyword: "미세먼지",
+    category: "전체",
+    summary: "대기질 예보와 외출 전 확인 수요가 겹치며 다시 검색량이 올랐습니다.",
+    headlines: ["전국 초미세먼지 농도 상승", "주말 미세먼지 예보 관심"],
+    links: []
+  },
+  {
+    rank: 4,
+    keyword: "신작 모바일게임",
+    category: "게임",
+    summary: "신작 출시와 사전예약 보상 소식이 퍼지며 관심이 모였습니다.",
+    headlines: ["모바일 신작 출시 예고", "사전예약 보상 공개"],
+    links: []
+  }
 ];
 
 const CATEGORIES = ["전체", "정치", "경제", "스포츠", "연예", "게임"];
@@ -14,7 +42,8 @@ const state = {
   search: "",
   trends: [],
   selected: null,
-  favorites: loadFavorites()
+  favorites: loadFavorites(),
+  isRefreshing: false
 };
 
 const el = {
@@ -47,6 +76,7 @@ function saveCache(key, value) {
 function loadCache(key) {
   const raw = localStorage.getItem(key);
   if (!raw) return null;
+
   try {
     return JSON.parse(raw);
   } catch {
@@ -81,20 +111,23 @@ function escapeHtml(text) {
 
 function renderTabs() {
   el.tabs.innerHTML = "";
+
   CATEGORIES.forEach((name) => {
     const btn = document.createElement("button");
     btn.className = "tab" + (state.category === name ? " active" : "");
     btn.textContent = name;
+
     btn.addEventListener("click", () => {
       state.category = name;
       renderTabs();
-      renderList(filterBySearch(filterByCategory(state.trends)));
+      renderCurrentList();
     });
+
     el.tabs.appendChild(btn);
   });
 }
 
-function setLoading() {
+function setLoadingMessage() {
   el.list.innerHTML = '<div class="loading-card">실시간 키워드를 불러오는 중...</div>';
 }
 
@@ -111,6 +144,7 @@ function filterBySearch(items) {
   if (!state.search.trim()) return items;
 
   const q = state.search.trim().toLowerCase();
+
   return items.filter((item) => {
     const keyword = String(item.keyword || "").toLowerCase();
     const summary = String(item.summary || "").toLowerCase();
@@ -135,6 +169,11 @@ function normalizeServerData(data) {
     headlines: Array.isArray(item.headlines) ? item.headlines : [],
     links: Array.isArray(item.links) ? item.links : []
   }));
+}
+
+function renderCurrentList() {
+  const filtered = filterBySearch(filterByCategory(state.trends));
+  renderList(filtered);
 }
 
 function renderList(items) {
@@ -170,6 +209,7 @@ function renderList(items) {
 
     article.querySelector('[data-action="detail"]').addEventListener("click", () => openDetail(item));
     article.querySelector('[data-action="favorite"]').addEventListener("click", () => toggleFavorite(item.keyword));
+
     el.list.appendChild(article);
   });
 }
@@ -213,6 +253,7 @@ function renderFavorites() {
   }
 
   const currentMap = new Map(state.trends.map((item) => [item.keyword, item]));
+
   el.favoriteList.innerHTML = state.favorites.map((keyword) => {
     const item = currentMap.get(keyword);
     return `
@@ -236,6 +277,7 @@ function renderFavorites() {
 
 function toggleFavorite(keyword) {
   const idx = state.favorites.indexOf(keyword);
+
   if (idx >= 0) {
     state.favorites.splice(idx, 1);
   } else {
@@ -243,7 +285,7 @@ function toggleFavorite(keyword) {
   }
 
   saveFavorites();
-  renderList(filterBySearch(filterByCategory(state.trends)));
+  renderCurrentList();
 
   if (state.selected && state.selected.keyword === keyword) {
     el.favoriteBtn.textContent = state.favorites.includes(keyword) ? "즐겨찾기 해제" : "즐겨찾기";
@@ -252,12 +294,46 @@ function toggleFavorite(keyword) {
   renderFavorites();
 }
 
-async function fetchAndRender() {
-  setLoading();
-  el.sourceState.textContent = "불러오는 중";
+function showCachedOrSampleImmediately() {
+  const cached = loadCache("trendpick-last-success");
+
+  if (cached && Array.isArray(cached.trends) && cached.trends.length) {
+    state.trends = cached.trends;
+    el.updatedAt.textContent = formatTime(cached.updatedAt || Date.now());
+    el.sourceState.textContent = "마지막 저장 데이터";
+    renderCurrentList();
+    return;
+  }
+
+  state.trends = SAMPLE_TRENDS;
+  el.updatedAt.textContent = formatTime(Date.now());
+  el.sourceState.textContent = "샘플 데이터";
+  renderCurrentList();
+}
+
+async function fetchAndRender(showLoadingOnlyWhenEmpty = false) {
+  if (state.isRefreshing) return;
+  state.isRefreshing = true;
+
+  if (showLoadingOnlyWhenEmpty && (!state.trends || !state.trends.length)) {
+    setLoadingMessage();
+    el.updatedAt.textContent = "불러오는 중...";
+    el.sourceState.textContent = "불러오는 중";
+  } else {
+    el.sourceState.textContent = "업데이트 중";
+  }
 
   try {
-    const response = await fetch(`${API_BASE}/trends`, { cache: "no-store" });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+    const response = await fetch(`${API_BASE}/trends`, {
+      cache: "no-store",
+      signal: controller.signal
+    });
+
+    clearTimeout(timeoutId);
+
     if (!response.ok) {
       throw new Error("서버 응답 실패");
     }
@@ -270,6 +346,7 @@ async function fetchAndRender() {
     }
 
     state.trends = trends;
+
     saveCache("trendpick-last-success", {
       updatedAt: Date.now(),
       trends
@@ -277,31 +354,40 @@ async function fetchAndRender() {
 
     el.updatedAt.textContent = formatTime(Date.now());
     el.sourceState.textContent = "실시간 서버 데이터";
-    renderList(filterBySearch(filterByCategory(trends)));
+    renderCurrentList();
   } catch (error) {
-    const cached = loadCache("trendpick-last-success");
+    if (!state.trends || !state.trends.length) {
+      const cached = loadCache("trendpick-last-success");
 
-    if (cached && Array.isArray(cached.trends) && cached.trends.length) {
-      state.trends = cached.trends;
-      el.updatedAt.textContent = formatTime(cached.updatedAt || Date.now());
-      el.sourceState.textContent = "마지막 저장 데이터";
-      renderList(filterBySearch(filterByCategory(cached.trends)));
-      return;
+      if (cached && Array.isArray(cached.trends) && cached.trends.length) {
+        state.trends = cached.trends;
+        el.updatedAt.textContent = formatTime(cached.updatedAt || Date.now());
+        el.sourceState.textContent = "마지막 저장 데이터";
+        renderCurrentList();
+      } else {
+        state.trends = SAMPLE_TRENDS;
+        el.updatedAt.textContent = formatTime(Date.now());
+        el.sourceState.textContent = "샘플 데이터";
+        renderCurrentList();
+      }
+    } else {
+      if (el.sourceState.textContent === "업데이트 중") {
+        el.sourceState.textContent = "마지막 저장 데이터";
+      }
     }
-
-    state.trends = SAMPLE_TRENDS;
-    el.updatedAt.textContent = formatTime(Date.now());
-    el.sourceState.textContent = "샘플 데이터";
-    renderList(filterBySearch(filterByCategory(state.trends)));
+  } finally {
+    state.isRefreshing = false;
   }
 }
 
 function bindEvents() {
-  el.refreshBtn.addEventListener("click", fetchAndRender);
+  el.refreshBtn.addEventListener("click", () => {
+    fetchAndRender(false);
+  });
 
   el.searchInput.addEventListener("input", (e) => {
     state.search = e.target.value;
-    renderList(filterBySearch(filterByCategory(state.trends)));
+    renderCurrentList();
   });
 
   el.closeDetailBtn.addEventListener("click", closeDetail);
@@ -329,7 +415,7 @@ function bindEvents() {
         alert("요약을 복사했어요.");
       }
     } catch {
-      // 사용자가 공유 취소한 경우 무시
+      // 사용자가 취소한 경우 무시
     }
   });
 
@@ -346,4 +432,5 @@ if ("serviceWorker" in navigator) {
 
 renderTabs();
 bindEvents();
-fetchAndRender();
+showCachedOrSampleImmediately();
+fetchAndRender(false);
