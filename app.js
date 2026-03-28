@@ -6,22 +6,20 @@ const SAMPLE_TRENDS = [
     keyword: "트럼프",
     category: "정치",
     summary: "트럼프 관련 주요 보도",
-    headlines: [
-      "트럼프, 호르무즈 해협 명칭 변경 검토",
-      "트럼프 외교 발언 파장"
-    ],
-    links: []
+    headlines: ["트럼프, 호르무즈 해협 명칭 변경 검토"],
+    links: [],
+    delta: 3,
+    views: 0
   },
   {
     rank: 2,
     keyword: "닌텐도",
     category: "게임",
     summary: "닌텐도 관련 주요 보도",
-    headlines: [
-      "닌텐도, 스위치2 생산 줄인다",
-      "닌텐도 신형 기기 기대감"
-    ],
-    links: []
+    headlines: ["닌텐도, 스위치2 생산 줄인다"],
+    links: [],
+    delta: 1,
+    views: 0
   }
 ];
 
@@ -156,7 +154,8 @@ function normalizeServerData(data) {
     category: item.category ?? "일반",
     summary: item.summary ?? item.keyword ?? "실시간 이슈입니다.",
     headlines: Array.isArray(item.headlines) ? item.headlines : [],
-    links: Array.isArray(item.links) ? item.links : []
+    links: Array.isArray(item.links) ? item.links : [],
+    views: item.views ?? 0
   }));
 }
 
@@ -172,30 +171,40 @@ function renderList(items) {
 
   el.list.innerHTML = "";
 
-  items.forEach((item) => {
+  items.forEach((item, idx) => {
     const article = document.createElement("article");
-    article.className = "trend-item";
+    article.className = "trend-item card-enter";
+    article.style.animationDelay = `${idx * 0.04}s`;
 
     const previewHeadlines = (item.headlines || []).slice(0, 3);
+
+    const deltaHtml = item.delta > 0
+      ? `<div class="delta-badge">▲ +${item.delta}</div>`
+      : `<div class="delta-badge delta-flat">-</div>`;
 
     article.innerHTML = `
       <div class="trend-top">
         <div class="rank-badge">${item.rank}</div>
         <div class="trend-main">
           <div class="trend-title-row">
-            <div class="trend-title" style="font-size:32px; line-height:1.35; font-weight:800;">
+            <div class="trend-title big-title">
               ${escapeHtml(item.keyword)}
             </div>
             <div class="chip">${escapeHtml(item.category)}</div>
           </div>
 
-          <p class="summary" style="margin-top:12px; line-height:1.55; font-size:16px;">
+          <div class="meta-row">
+            ${deltaHtml}
+            <div class="view-badge">조회 ${item.views || 0}</div>
+          </div>
+
+          <p class="summary big-summary">
             ${escapeHtml(item.summary)}
           </p>
 
-          <div class="headline-preview" style="margin-top:12px;">
+          <div class="headline-preview">
             ${previewHeadlines.map((h) => `
-              <div class="preview-item" style="margin:7px 0; opacity:0.88; line-height:1.45;">
+              <div class="preview-item">
                 • ${escapeHtml(h)}
               </div>
             `).join("")}
@@ -216,11 +225,27 @@ function renderList(items) {
   });
 }
 
+async function trackView(keyword) {
+  try {
+    await fetch(`${API_BASE}/track-view`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ keyword })
+    });
+  } catch {
+    // 실패해도 무시
+  }
+}
+
 function openDetail(item) {
   state.selected = item;
   el.detailRank.textContent = `${item.rank}위 · ${item.category}`;
   el.detailKeyword.textContent = item.keyword;
   el.detailSummary.textContent = item.summary || item.keyword;
+
+  trackView(item.keyword);
 
   if (item.links && item.links.length) {
     el.detailLinks.innerHTML = item.links.map((link, index) => `
