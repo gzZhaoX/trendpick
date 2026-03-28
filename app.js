@@ -3,18 +3,24 @@ const API_BASE = "https://trendpick-api.onrender.com";
 const SAMPLE_TRENDS = [
   {
     rank: 1,
-    keyword: "트럼프, 호르무즈 해협 명칭 변경 검토",
+    keyword: "트럼프",
     category: "정치",
-    summary: "트럼프, 호르무즈 해협 명칭 변경 검토",
-    headlines: ["트럼프, 호르무즈 해협 명칭 변경 검토"],
+    summary: "트럼프 관련 주요 보도",
+    headlines: [
+      "트럼프, 호르무즈 해협 명칭 변경 검토",
+      "트럼프 외교 발언 파장"
+    ],
     links: []
   },
   {
     rank: 2,
-    keyword: "닌텐도, 스위치2 생산 줄인다…미국 수요 부진",
+    keyword: "닌텐도",
     category: "게임",
-    summary: "닌텐도, 스위치2 생산 줄인다…미국 수요 부진",
-    headlines: ["닌텐도, 스위치2 생산 줄인다…미국 수요 부진"],
+    summary: "닌텐도 관련 주요 보도",
+    headlines: [
+      "닌텐도, 스위치2 생산 줄인다",
+      "닌텐도 신형 기기 기대감"
+    ],
     links: []
   }
 ];
@@ -142,6 +148,7 @@ function filterBySearch(items) {
 
 function normalizeServerData(data) {
   if (!Array.isArray(data)) return [];
+
   return data.map((item, index) => ({
     rank: item.rank ?? index + 1,
     keyword: item.keyword ?? `이슈 ${index + 1}`,
@@ -169,20 +176,7 @@ function renderList(items) {
     const article = document.createElement("article");
     article.className = "trend-item";
 
-    const detailTitle = item.summary || item.keyword;
-    const previewHeadlines = (item.headlines || []).slice(0, 2);
-
-    const previewHtml = previewHeadlines.length
-      ? `
-        <div class="headline-preview" style="margin-top:12px;">
-          ${previewHeadlines.map((h) => `
-            <div class="preview-item" style="margin:7px 0; opacity:0.88; line-height:1.45;">
-              • ${escapeHtml(h)}
-            </div>
-          `).join("")}
-        </div>
-      `
-      : "";
+    const previewHeadlines = (item.headlines || []).slice(0, 3);
 
     article.innerHTML = `
       <div class="trend-top">
@@ -196,10 +190,16 @@ function renderList(items) {
           </div>
 
           <p class="summary" style="margin-top:12px; line-height:1.55; font-size:16px;">
-            ${escapeHtml(detailTitle)}
+            ${escapeHtml(item.summary)}
           </p>
 
-          ${previewHtml}
+          <div class="headline-preview" style="margin-top:12px;">
+            ${previewHeadlines.map((h) => `
+              <div class="preview-item" style="margin:7px 0; opacity:0.88; line-height:1.45;">
+                • ${escapeHtml(h)}
+              </div>
+            `).join("")}
+          </div>
 
           <div class="item-actions">
             <button class="action-btn" data-action="detail">자세히</button>
@@ -402,7 +402,7 @@ function bindEvents() {
   el.shareBtn.addEventListener("click", async () => {
     if (!state.selected) return;
 
-    const text = `${state.selected.keyword}`;
+    const text = state.selected.keyword;
 
     try {
       if (navigator.share) {
