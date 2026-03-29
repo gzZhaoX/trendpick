@@ -1,4 +1,5 @@
 import re
+import json
 import requests
 import xml.etree.ElementTree as ET
 
@@ -29,35 +30,21 @@ FEEDS = {
     "스포츠": "https://news.google.com/rss/headlines/section/topic/SPORTS?hl=ko&gl=KR&ceid=KR:ko",
     "연예": "https://news.google.com/rss/search?q=연예 OR 배우 OR 가수&hl=ko&gl=KR&ceid=KR:ko",
     "게임": "https://news.google.com/rss/search?q=게임 OR 스팀 OR 닌텐도&hl=ko&gl=KR&ceid=KR:ko",
-
     "유튜브": "https://www.youtube.com/feeds/videos.xml?channel_id=UC_x5XG1OV2P6uZZ5FSM9Ttw",
     "웃긴대학": "https://web.humoruniv.com/rss/best.xml",
     "보배드림": "https://m.bobaedream.co.kr/board/bbs/best/rss",
-
-    # 수정된 네이트 주소
     "네이트": "https://www.nate.com/main/srv/news/data/keywordList.today.json"
 }
 
 
-def fetch_text(url: str, timeout: int = 10, encoding: str | None = None) -> str:
+def fetch_text(url: str, timeout: int = 10, encoding=None) -> str:
     response = requests.get(url, headers=HEADERS, timeout=timeout)
     response.raise_for_status()
 
     if encoding:
         response.encoding = encoding
-        return response.text
 
     return response.text
-
-
-def fetch_json(url: str, timeout: int = 10, encoding: str | None = None):
-    response = requests.get(url, headers=HEADERS, timeout=timeout)
-    response.raise_for_status()
-
-    if encoding:
-        response.encoding = encoding
-
-    return response.json()
 
 
 def clean_xml_text(xml_text: str) -> str:
@@ -123,48 +110,69 @@ def parse_youtube_atom(xml_text: str):
     return items
 
 
-def parse_nate_json(payload: dict):
-    result = []
+def find_keywords_deep(obj, found):
+    if isinstance(obj, dict):
+        for key in ["keyword", "name", "txt", "text", "query", "title", "k"]:
+            value = obj.get(key)
+            if isinstance(value, str):
+                value = value.strip()
+                if len(value) >= 2 and value not in found:
+                    found.append(value)
 
-    # 구조가 바뀔 수 있어서 후보 키들 넉넉하게 탐색
-    candidates = (
-        payload.get("data")
-        or payload.get("keywordList")
-        or payload.get("list")
-        or payload.get("contents")
-        or []
-    )
+        for value in obj.values():
+            find_keywords_deep(value, found)
 
-    if isinstance(candidates, dict):
-        candidates = candidates.get("list", [])
+    elif isinstance(obj, list):
+        for item in obj:
+            find_keywords_deep(item, found)
 
-    if not isinstance(candidates, list):
-        candidates = []
 
-    for i, item in enumerate(candidates[:10]):
-        if isinstance(item, dict):
-            keyword = (
-                item.get("keyword")
-                or item.get("name")
-                or item.get("k")
-                or item.get("txt")
-                or ""
-            )
-        else:
-            keyword = str(item).strip()
+def parse_nate_response(text: str):
+    text = text.strip()
+    found = []
 
-        keyword = str(keyword).strip()
-        if not keyword:
+    # 1차: JSON 파싱 시도
+    try:
+        data = json.loads(text)
+        find_keywords_deep(data, found)
+    except Exception:
+        pass
+
+    # 2차: 문자열 패턴에서 키워드 후보 추출
+    if not found:
+        matches = re.findall(r'"([^"]{2,40})"', text)
+        for m in matches:
+            value = m.strip()
+            if not re.search(r"[가-힣A-Za-z0-9]", value):
+                continue
+            if value in found:
+                continue
+            found.append(value)
+
+    blocked = {
+        "success", "result", "data", "list", "keyword",
+        "news", "tab", "value", "rank", "on", "off", "true", "false"
+    }
+
+    cleaned = []
+    for value in found:
+        if value.lower() in blocked:
             continue
+        if len(value) < 2:
+            continue
+        cleaned.append(value)
+        if len(cleaned) >= 10:
+            break
 
-        result.append({
+    return [
+        {
             "keyword": keyword,
-            "rank": len(result) + 1,
+            "rank": i + 1,
             "category": "네이트",
             "link": f"https://search.nate.com/search/all.html?q={keyword}"
-        })
-
-    return result
+        }
+        for i, keyword in enumerate(cleaned)
+    ]
 
 
 def clean_item_list(items: list, category: str, limit: int = 20):
@@ -197,8 +205,8 @@ def get_trends(category: str = Query(default="전체")):
 
     try:
         if selected_category == "네이트":
-            payload = fetch_json(url, timeout=8, encoding="utf-8")
-            data = parse_nate_json(payload)
+            text = fetch_text(url, timeout=8, encoding="utf-8")
+            data = parse_nate_response(text)
             data = clean_item_list(data, "네이트", 10)
 
         elif selected_category == "유튜브":
@@ -246,3 +254,10 @@ def get_trends(category: str = Query(default="전체")):
             status_code=502,
             detail=f"{selected_category} 처리 실패: {str(e)}"
         )
+
+
+@app.get("/debug-nate")
+def debug_nate():
+    url = FEEDS["네이트"]
+    text = fetch_text(url, timeout=8, encoding="utf-8")
+    return {"preview": text[:3000]}
