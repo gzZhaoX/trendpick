@@ -34,10 +34,23 @@ FEEDS = {
 }
 
 
-def fetch_text(url: str) -> str:
-    res = requests.get(url, headers=HEADERS, timeout=10)
+def fetch_response(url: str, timeout: int = 10):
+    res = requests.get(url, headers=HEADERS, timeout=timeout)
     res.raise_for_status()
+    return res
+
+
+def fetch_text(url: str, timeout: int = 10) -> str:
+    res = fetch_response(url, timeout=timeout)
     return res.text
+
+
+def fetch_nate_json(url: str, timeout: int = 10) -> dict:
+    res = fetch_response(url, timeout=timeout)
+
+    # 중요: text 쓰지 말고 bytes -> utf-8 직접 디코드
+    raw = res.content.decode("utf-8", errors="strict")
+    return json.loads(raw)
 
 
 def strip_namespaces(xml_text: str) -> str:
@@ -92,19 +105,7 @@ def parse_youtube(xml_text: str):
     return items
 
 
-def decode_unicode_text(value: str) -> str:
-    if not value:
-        return ""
-
-    text = value
-
-    # \uXXXX 디코드가 필요한 경우만 수행
-    if "\\u" in text:
-        try:
-            text = bytes(text, "utf-8").decode("unicode_escape")
-        except Exception:
-            pass
-
+def clean_html_text(text: str) -> str:
     text = html.unescape(text)
     text = re.sub(r"<br\s*/?>", " ", text, flags=re.I)
     text = re.sub(r"<[^>]+>", "", text)
@@ -112,15 +113,10 @@ def decode_unicode_text(value: str) -> str:
     return text
 
 
-def parse_nate(text: str):
-    try:
-        outer = json.loads(text)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"네이트 JSON 파싱 실패: {str(e)}")
-
-    raw_data = outer.get("data", {})
+def parse_nate(payload: dict):
+    raw_data = payload.get("data", {})
     if not isinstance(raw_data, dict):
-        raise HTTPException(status_code=502, detail="네이트 data 구조가 예상과 다릅니다.")
+        raise HTTPException(status_code=502, detail="네이트 data 구조가 이상합니다.")
 
     items = []
     blocked_exact = {
@@ -140,8 +136,8 @@ def parse_nate(text: str):
         if not isinstance(entry, dict):
             continue
 
-        raw_keyword = str(entry.get("keyword_name", "")).strip()
-        keyword = decode_unicode_text(raw_keyword)
+        keyword = str(entry.get("keyword_name", "")).strip()
+        keyword = clean_html_text(keyword)
 
         if not keyword:
             continue
@@ -171,13 +167,14 @@ def get_trends(category: str = Query(default="전체")):
     url = FEEDS[category]
 
     try:
-        text = fetch_text(url)
-
         if category == "네이트":
-            data = parse_nate(text)
+            payload = fetch_nate_json(url, timeout=10)
+            data = parse_nate(payload)
         elif category == "유튜브":
+            text = fetch_text(url, timeout=10)
             data = parse_youtube(text)
         else:
+            text = fetch_text(url, timeout=10)
             data = parse_rss(text, category)
 
         if not data:
@@ -193,10 +190,9 @@ def get_trends(category: str = Query(default="전체")):
 
 @app.get("/debug-nate")
 def debug_nate():
-    text = fetch_text(FEEDS["네이트"])
-    outer = json.loads(text)
+    payload = fetch_nate_json(FEEDS["네이트"], timeout=10)
     return {
-        "result": outer.get("result"),
-        "message": outer.get("message"),
-        "first_item": outer.get("data", {}).get("0", {})
+        "result": payload.get("result"),
+        "message": payload.get("message"),
+        "first_item": payload.get("data", {}).get("0", {})
     }
