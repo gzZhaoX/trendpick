@@ -1,6 +1,4 @@
 import re
-import json
-import html
 import requests
 import xml.etree.ElementTree as ET
 
@@ -17,7 +15,11 @@ app.add_middleware(
 )
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0"
+    "User-Agent": (
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) "
+        "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+        "Version/16.0 Mobile/15E148 Safari/604.1"
+    )
 }
 
 FEEDS = {
@@ -30,7 +32,7 @@ FEEDS = {
     "유튜브": "https://www.youtube.com/feeds/videos.xml?channel_id=UC_x5XG1OV2P6uZZ5FSM9Ttw",
     "웃긴대학": "https://web.humoruniv.com/rss/best.xml",
     "보배드림": "https://m.bobaedream.co.kr/board/bbs/best/rss",
-    "네이트": "https://www.nate.com/main/srv/news/data/keywordList.today.json"
+    "네이트": "https://www.nate.com/"
 }
 
 
@@ -45,13 +47,15 @@ def fetch_text(url: str, timeout: int = 10) -> str:
     return res.text
 
 
-def fetch_json(url: str, timeout: int = 10) -> dict:
-    res = fetch_response(url, timeout=timeout)
-    return res.json()
-
-
 def strip_namespaces(xml_text: str) -> str:
     return re.sub(r'\sxmlns(:\w+)?="[^"]+"', '', xml_text)
+
+
+def normalize_title(title: str) -> str:
+    title = (title or "").strip()
+    if " - " in title:
+        title = title.split(" - ")[0].strip()
+    return title
 
 
 def parse_rss(xml_text: str, category: str):
@@ -60,11 +64,8 @@ def parse_rss(xml_text: str, category: str):
 
     items = []
     for i, node in enumerate(root.findall(".//item")[:20]):
-        title = (node.findtext("title") or "").strip()
+        title = normalize_title(node.findtext("title") or "")
         link = (node.findtext("link") or "").strip()
-
-        if " - " in title:
-            title = title.split(" - ")[0].strip()
 
         if not title:
             continue
@@ -102,62 +103,82 @@ def parse_youtube(xml_text: str):
     return items
 
 
-def decode_nate_keyword(value: str) -> str:
-    text = str(value or "").strip()
-    if not text:
-        return ""
-
-    # \\uXXXX 형태를 실제 한글로 변환
-    try:
-        text = text.encode("utf-8").decode("unicode_escape")
-    except Exception:
-        pass
-
-    text = html.unescape(text)
-    text = re.sub(r"<br\s*/?>", " ", text, flags=re.I)
-    text = re.sub(r"<[^>]+>", "", text)
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
+def strip_html(text: str) -> str:
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"&nbsp;|&#160;", " ", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
 
 
-def parse_nate(payload: dict):
-    raw_data = payload.get("data", {})
-    if not isinstance(raw_data, dict):
-        raise HTTPException(status_code=502, detail="네이트 data 구조가 이상합니다.")
+def parse_nate_homepage(html_text: str):
+    text = html_text
 
-    items = []
+    # "실시간 이슈 키워드" 섹션 근처만 잘라서 사용
+    marker = "실시간 이슈 키워드"
+    start = text.find(marker)
+    if start == -1:
+        raise HTTPException(status_code=502, detail="네이트 실시간 이슈 키워드 섹션을 찾지 못했습니다.")
 
-    def sort_key(k):
-        try:
-            return int(k)
-        except Exception:
-            return 999999
+    sliced = text[start:start + 5000]
 
-    for key in sorted(raw_data.keys(), key=sort_key):
-        entry = raw_data.get(key, {})
-        if not isinstance(entry, dict):
+    # 숫자 순위 + 키워드 패턴 추출
+    # 예: 1. 6 프리지아 갤럭시 유저 상승 29
+    pattern = re.findall(r'>\s*(\d+)\.\s*(?:\d+\s+)?([^<]+?)\s*(?:상승|하락|new|동일)', sliced, flags=re.I)
+
+    results = []
+    seen = set()
+
+    for _, raw_keyword in pattern:
+        keyword = strip_html(raw_keyword)
+        keyword = re.sub(r"\s+", " ", keyword).strip()
+
+        if not keyword or len(keyword) < 2:
+            continue
+        if keyword in seen:
             continue
 
-        keyword = decode_nate_keyword(entry.get("keyword_name", ""))
-
-        if not keyword:
-            continue
-        if len(keyword) < 2:
-            continue
-        if re.fullmatch(r"[0-9:\- ]+", keyword):
-            continue
-
-        items.append({
+        seen.add(keyword)
+        results.append({
             "keyword": keyword,
-            "rank": len(items) + 1,
+            "rank": len(results) + 1,
             "category": "네이트",
             "link": f"https://search.nate.com/search/all.html?q={requests.utils.quote(keyword)}"
         })
 
-        if len(items) >= 10:
+        if len(results) >= 10:
             break
 
-    return items
+    # 혹시 위 패턴이 안 맞으면 예비 패턴
+    if not results:
+        fallback = re.findall(r'실시간 이슈 키워드.*?(?:<li[^>]*>.*?</li>){1,15}', sliced, flags=re.S)
+        if fallback:
+            block = fallback[0]
+            li_texts = re.findall(r'<li[^>]*>(.*?)</li>', block, flags=re.S)
+            for li in li_texts:
+                cleaned = strip_html(li)
+                cleaned = re.sub(r'^\d+\s*', '', cleaned)
+                cleaned = re.sub(r'\b(상승|하락|new|동일)\b.*$', '', cleaned, flags=re.I).strip()
+
+                if not cleaned or len(cleaned) < 2:
+                    continue
+                if cleaned in seen:
+                    continue
+
+                seen.add(cleaned)
+                results.append({
+                    "keyword": cleaned,
+                    "rank": len(results) + 1,
+                    "category": "네이트",
+                    "link": f"https://search.nate.com/search/all.html?q={requests.utils.quote(cleaned)}"
+                })
+
+                if len(results) >= 10:
+                    break
+
+    if not results:
+        raise HTTPException(status_code=502, detail="네이트 키워드를 추출하지 못했습니다.")
+
+    return results
 
 
 @app.get("/trends")
@@ -167,8 +188,8 @@ def get_trends(category: str = Query(default="전체")):
 
     try:
         if category == "네이트":
-            payload = fetch_json(url, timeout=10)
-            data = parse_nate(payload)
+            html_text = fetch_text(url, timeout=10)
+            data = parse_nate_homepage(html_text)
         elif category == "유튜브":
             text = fetch_text(url, timeout=10)
             data = parse_youtube(text)
@@ -189,15 +210,11 @@ def get_trends(category: str = Query(default="전체")):
 
 @app.get("/debug-nate")
 def debug_nate():
-    payload = fetch_json(FEEDS["네이트"], timeout=10)
-    first_item = payload.get("data", {}).get("0", {})
-    raw_keyword = first_item.get("keyword_name", "")
-    decoded_keyword = decode_nate_keyword(raw_keyword)
-
+    html_text = fetch_text(FEEDS["네이트"], timeout=10)
+    marker = "실시간 이슈 키워드"
+    start = html_text.find(marker)
+    snippet = html_text[start:start + 3000] if start != -1 else html_text[:3000]
     return {
-        "result": payload.get("result"),
-        "message": payload.get("message"),
-        "raw_keyword_name": raw_keyword,
-        "decoded_keyword_name": decoded_keyword,
-        "first_item": first_item
+        "found_marker": start != -1,
+        "snippet": snippet
     }
