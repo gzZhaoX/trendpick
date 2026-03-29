@@ -1,9 +1,12 @@
 /**
- * 트렌드픽 2.0 - 마스터 보정판 (이중 통로 시스템)
+ * 트렌드픽 2.0 - 초강력 로딩 버전 (3중 프록시 & 타임아웃 연장)
  */
 
-const PROXY_1 = "https://corsproxy.io/?";
-const PROXY_2 = "https://api.allorigins.win/raw?url=";
+const PROXIES = [
+  "https://api.allorigins.win/raw?url=",
+  "https://corsproxy.io/?",
+  "https://thingproxy.freeboard.io/fetch/"
+];
 
 const SOURCES = {
   google: { name: "구글 뉴스", url: "https://news.google.com/rss/search?q=주요뉴스&hl=ko&gl=KR&ceid=KR:ko", type: "rss" },
@@ -20,7 +23,7 @@ let favorites = JSON.parse(localStorage.getItem('trendPickFavs')) || [];
 document.addEventListener('DOMContentLoaded', () => {
   renderTabs();
   loadData(currentSource);
-  // 버튼 연결
+  
   document.getElementById('refreshBtn').onclick = () => loadData(currentSource);
   document.getElementById('searchInput').oninput = (e) => filterData(e.target.value);
   document.getElementById('closeDetailBtn').onclick = closeDetail;
@@ -47,21 +50,22 @@ function switchSource(sourceKey) {
   loadData(sourceKey);
 }
 
-// 💡 핵심: 이중 프록시 시도 함수
-async function fetchWithFallback(url) {
-  try {
-    // 첫 번째 통로 시도
-    let response = await fetch(PROXY_1 + encodeURIComponent(url));
-    if (response.ok) return await response.text();
-    
-    // 실패 시 두 번째 통로 시도
-    response = await fetch(PROXY_2 + encodeURIComponent(url));
-    if (response.ok) return await response.text();
-    
-    throw new Error('모든 통로가 막혔습니다.');
-  } catch (e) {
-    throw e;
+// 💡 3개의 프록시를 순서대로 다 찔러보는 함수
+async function fetchPowerfully(targetUrl) {
+  for (const proxy of PROXIES) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 12000); // 12초 대기 (LTE 배려)
+      
+      const response = await fetch(proxy + encodeURIComponent(targetUrl), { signal: controller.signal });
+      clearTimeout(timeoutId);
+      
+      if (response.ok) return await response.text();
+    } catch (e) {
+      console.log(`${proxy} 통로 실패, 다음 통로 시도...`);
+    }
   }
+  throw new Error("모든 통로가 막혔습니다.");
 }
 
 async function loadData(sourceKey) {
@@ -70,11 +74,11 @@ async function loadData(sourceKey) {
   const sourceState = document.getElementById('sourceState');
   const updatedAt = document.getElementById('updatedAt');
 
-  trendList.innerHTML = '<p style="padding:40px; text-align:center; color:#9aa3b2;">트렌드를 낚아올리는 중...</p>';
-  sourceState.innerText = "안전한 통로 찾는 중...";
+  trendList.innerHTML = '<p style="padding:40px; text-align:center; color:#9aa3b2;">트렌드를 낚는 중... (최대 12초 소요)</p>';
+  sourceState.innerText = "강력한 통로 연결 중...";
 
   try {
-    const rawData = await fetchWithFallback(source.url);
+    const rawData = await fetchPowerfully(source.url);
     const parser = new DOMParser();
     allData = [];
 
@@ -91,12 +95,11 @@ async function loadData(sourceKey) {
           rank: idx + 1,
           title: title.trim(),
           link: link || "#",
-          summary: desc.replace(/<[^>]*>?/gm, '').slice(0, 150), // HTML 태그 제거
+          summary: desc.replace(/<[^>]*>?/gm, '').slice(0, 150),
           source: source.name
         });
       });
     } else if (source.type === 'nate') {
-      // 네이트 전용 정교한 파싱
       const regex = /\[\d+,\s*"(.*?)"/g;
       let match, idx = 1;
       while ((match = regex.exec(rawData)) !== null && idx <= 10) {
@@ -110,18 +113,19 @@ async function loadData(sourceKey) {
       }
     }
 
-    if (allData.length === 0) throw new Error('파싱 데이터 없음');
+    if (allData.length === 0) throw new Error('파싱 실패');
 
     renderList(allData);
     sourceState.innerText = "실시간 데이터 수신 성공";
     updatedAt.innerText = new Date().toLocaleString('ko-KR', { hour12: true });
 
   } catch (error) {
-    sourceState.innerText = "신호 약함 (다시 시도)";
+    sourceState.innerText = "신호 매우 약함 (다시 시도)";
     trendList.innerHTML = `
       <div style="padding:40px; text-align:center;">
-        <p>데이터 로드에 실패했습니다. 😢</p>
-        <button onclick="loadData('${sourceKey}')" class="action-btn" style="margin-top:10px;">다시 시도</button>
+        <p>데이터 로딩 실패 😢</p>
+        <p style="font-size:12px; color:#9aa3b2; margin-top:8px;">LTE 환경에서 프록시 서버 응답이 늦을 수 있습니다.</p>
+        <button onclick="loadData('${sourceKey}')" class="action-btn" style="margin-top:15px;">다시 시도</button>
       </div>`;
   }
 }
@@ -155,10 +159,10 @@ function openDetailByIndex(index) {
     else favorites.push(item);
     localStorage.setItem('trendPickFavs', JSON.stringify(favorites));
     closeDetail();
-    alert(fIdx > -1 ? "삭제되었습니다." : "저장되었습니다!");
+    alert(fIdx > -1 ? "삭제됨" : "저장됨");
   };
 
-  document.getElementById('detailLinks').innerHTML = `<button class="action-btn" style="width:100%; padding:16px;" onclick="window.open('${item.link}', '_blank')">원본 페이지 열기</button>`;
+  document.getElementById('detailLinks').innerHTML = `<button class="action-btn" style="width:100%; padding:16px;" onclick="window.open('${item.link}', '_blank')">원본 열기</button>`;
   document.getElementById('sheetBackdrop').classList.remove('hidden');
   document.getElementById('detailSheet').classList.remove('hidden');
 }
@@ -175,7 +179,7 @@ function openFavorites() {
     : favorites.map(item => `
       <div class="trend-item" style="margin-bottom:12px; border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:10px;" onclick="window.open('${item.link}', '_blank')">
         <div style="font-size:16px; font-weight:700;">${item.title}</div>
-        <div style="font-size:12px; color:#9aa3b2; margin-top:4px;">${item.source} (터치시 이동)</div>
+        <div style="font-size:12px; color:#9aa3b2; margin-top:4px;">${item.source}</div>
       </div>
     `).join('');
   document.getElementById('favoritesBackdrop').classList.remove('hidden');
