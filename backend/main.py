@@ -14,7 +14,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 데이터 소스 정의
 CATEGORY_FEEDS = {
     "전체": "https://news.google.com/rss?hl=ko&gl=KR&ceid=KR:ko",
     "정치": "https://news.google.com/rss/headlines/section/topic/POLITICS?hl=ko&gl=KR&ceid=KR:ko",
@@ -32,54 +31,54 @@ def trends(category: str = Query("전체")):
     # 1. 네이트 실검 처리
     if category == "네이트":
         try:
-            url = "https://www.nate.com/js/data/keywordList.js"
-            res = requests.get(url, timeout=5)
-            # 네이트 특유의 인코딩(EUC-KR) 강제 설정
-            res.encoding = 'euc-kr' 
-            content = res.text
-            # 키워드 추출용 정규식
-            matches = re.findall(r"\[\d+,\s*\"(.*?)\"", content)
-            
-            return [{
-                "keyword": k, "rank": i, "category": "네이트",
-                "summary": f"네이트 실시간 이슈: {k}",
-                "link": f"https://search.daum.net/search?q={k}"
-            } for i, k in enumerate(matches[:10], start=1)]
-        except:
-            return []
+            res = requests.get("https://www.nate.com/js/data/keywordList.js", timeout=5)
+            res.encoding = 'euc-kr'
+            matches = re.findall(r"\[\d+,\s*\"(.*?)\"", res.text)
+            return [{"keyword": k, "rank": i, "category": "네이트", "summary": k, "link": f"https://search.daum.net/search?q={k}"} for i, k in enumerate(matches[:10], start=1)]
+        except: return []
 
-    # 2. 구글/유튜브/커뮤니티 처리
+    # 2. RSS 기반 처리
     url = CATEGORY_FEEDS.get(category, CATEGORY_FEEDS["전체"])
     try:
-        # 차단 방지를 위한 User-Agent 추가
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        res = requests.get(url, headers=headers, timeout=8)
-        root = ET.fromstring(res.content)
+        # 💡 보배드림 등 해외 서버 차단 방지용 헤더 강화
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
+        }
+        res = requests.get(url, headers=headers, timeout=10)
+        res.raise_for_status()
         
+        # XML 파싱
+        root = ET.fromstring(res.content)
         result = []
-        # 유튜브(Atom 형식)와 일반 RSS 형식 구분
-        is_youtube = "youtube" in url
-        items = root.findall(".//{http://www.w3.org/2005/Atom}entry") if is_youtube else root.findall(".//item")
+        is_yt = "youtube" in url
+        
+        # 유튜브(Atom)와 일반 RSS 아이템 찾기
+        items = root.findall(".//{http://www.w3.org/2005/Atom}entry") if is_yt else root.findall(".//item")
         
         for i, item in enumerate(items[:20], start=1):
-            title = ""
+            title = item.findtext("{http://www.w3.org/2005/Atom}title") if is_yt else item.findtext("title")
             link = ""
-            
-            if is_youtube:
-                title = item.findtext("{http://www.w3.org/2005/Atom}title", "제목 없음")
+            if is_yt:
                 link_tag = item.find("{http://www.w3.org/2005/Atom}link")
                 link = link_tag.get("href") if link_tag is not None else ""
             else:
-                title = item.findtext("title", "제목 없음").split(" - ")[0]
-                link = item.findtext("link", "")
+                link = item.findtext("link")
 
-            result.append({
-                "keyword": title.strip(),
-                "rank": i,
-                "category": category,
-                "summary": title.strip(),
-                "link": link
-            })
+            if title:
+                result.append({
+                    "keyword": title.split(" - ")[0].strip(),
+                    "rank": i,
+                    "category": category,
+                    "summary": title.strip(),
+                    "link": link
+                })
+        
+        # 만약 데이터가 없으면 '샘플 데이터'라도 반환해서 작동 확인
+        if not result:
+            return [{"keyword": f"{category} 데이터를 가져오는 중...", "rank": 1, "category": category, "summary": "잠시 후 다시 시도해주세요", "link": "#"}]
+            
         return result
-    except:
-        return []
+    except Exception as e:
+        print(f"Error: {e}")
+        return [{"keyword": "데이터 연결 실패", "rank": "!", "category": category, "summary": str(e), "link": "#"}]
