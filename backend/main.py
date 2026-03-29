@@ -1,4 +1,5 @@
 import re
+import html
 import requests
 import xml.etree.ElementTree as ET
 
@@ -14,13 +15,8 @@ app.add_middleware(
     allow_headers=["*"]
 )
 
-# PC 브라우저처럼 요청해야 네이트가 모바일로 튕기지 않음
 HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/122.0.0.0 Safari/537.36"
-    )
+    "User-Agent": "Mozilla/5.0"
 }
 
 FEEDS = {
@@ -30,59 +26,36 @@ FEEDS = {
     "스포츠": "https://news.google.com/rss/headlines/section/topic/SPORTS?hl=ko&gl=KR&ceid=KR:ko",
     "연예": "https://news.google.com/rss/search?q=연예 OR 배우 OR 가수&hl=ko&gl=KR&ceid=KR:ko",
     "게임": "https://news.google.com/rss/search?q=게임 OR 스팀 OR 닌텐도&hl=ko&gl=KR&ceid=KR:ko",
-    "유튜브": "https://www.youtube.com/feeds/videos.xml?channel_id=UC_x5XG1OV2P6uZZ5FSM9Ttw",
-    "웃긴대학": "https://web.humoruniv.com/rss/best.xml",
-    "보배드림": "https://m.bobaedream.co.kr/board/bbs/best/rss",
-    "네이트": "https://www.nate.com/"
+    "유튜브": "https://www.youtube.com/feeds/videos.xml?channel_id=UC_x5XG1OV2P6uZZ5FSM9Ttw"
 }
 
-
-def fetch_response(url: str, timeout: int = 10):
-    response = requests.get(
-        url,
-        headers=HEADERS,
-        timeout=timeout,
-        allow_redirects=True
-    )
-    response.raise_for_status()
-    return response
+CATEGORIES = list(FEEDS.keys())
 
 
-def fetch_text(url: str, timeout: int = 10) -> str:
-    response = fetch_response(url, timeout=timeout)
+def fetch(url):
+    res = requests.get(url, headers=HEADERS, timeout=10)
+    res.raise_for_status()
 
-    # HTML 인코딩 자동 추정
-    if not response.encoding or response.encoding.lower() == "iso-8859-1":
-        response.encoding = response.apparent_encoding
+    if not res.encoding or res.encoding == "ISO-8859-1":
+        res.encoding = res.apparent_encoding
 
-    return response.text
-
-
-def strip_namespaces(xml_text: str) -> str:
-    return re.sub(r'\sxmlns(:\w+)?="[^"]+"', '', xml_text)
+    return res.text
 
 
-def normalize_title(title: str) -> str:
-    text = (title or "").strip()
-    if " - " in text:
-        text = text.split(" - ")[0].strip()
-    return text
-
-
-def parse_rss(xml_text: str, category: str):
-    xml_text = strip_namespaces(xml_text)
-    root = ET.fromstring(xml_text.encode("utf-8"))
+# 🔹 구글 RSS
+def parse_rss(xml_text, category):
+    root = ET.fromstring(xml_text)
 
     items = []
     for i, node in enumerate(root.findall(".//item")[:20]):
-        title = normalize_title(node.findtext("title") or "")
-        link = (node.findtext("link") or "").strip()
+        title = (node.findtext("title") or "").split(" - ")[0].strip()
+        link = node.findtext("link") or ""
 
         if not title:
             continue
 
         items.append({
-            "keyword": title,
+            "keyword": html.unescape(title),
             "rank": i + 1,
             "category": category,
             "link": link
@@ -91,24 +64,24 @@ def parse_rss(xml_text: str, category: str):
     return items
 
 
-def parse_youtube(xml_text: str):
-    xml_text = strip_namespaces(xml_text)
-    root = ET.fromstring(xml_text.encode("utf-8"))
+# 🔹 유튜브 (정식 처리)
+def parse_youtube(xml_text):
+    root = ET.fromstring(xml_text)
+
+    ns = {"atom": "http://www.w3.org/2005/Atom"}
 
     items = []
-    for i, node in enumerate(root.findall(".//entry")[:20]):
-        title = (node.findtext("title") or "").strip()
+    for i, node in enumerate(root.findall("atom:entry", ns)[:20]):
+        title = node.findtext("atom:title", default="", namespaces=ns)
 
-        link_node = node.find("link")
-        link = ""
-        if link_node is not None:
-            link = link_node.get("href") or (link_node.text or "")
+        link_node = node.find("atom:link", ns)
+        link = link_node.get("href") if link_node is not None else ""
 
         if not title:
             continue
 
         items.append({
-            "keyword": title,
+            "keyword": title.strip(),
             "rank": i + 1,
             "category": "유튜브",
             "link": link
@@ -117,147 +90,33 @@ def parse_youtube(xml_text: str):
     return items
 
 
-def strip_html(text: str) -> str:
-    text = re.sub(r"<[^>]+>", " ", text)
-    text = re.sub(r"&nbsp;|&#160;", " ", text)
-    text = re.sub(r"&amp;", "&", text)
-    text = re.sub(r"&quot;", '"', text)
-    text = re.sub(r"&#39;", "'", text)
-    text = re.sub(r"\s+", " ", text)
-    return text.strip()
-
-
-def parse_nate_homepage(html_text: str):
-    # 모바일 리다이렉트 감지
-    if "location.href='http://m.nate.com/" in html_text or 'location.href="http://m.nate.com/' in html_text:
-        raise HTTPException(status_code=502, detail="네이트가 모바일 페이지로 리다이렉트되었습니다.")
-
-    marker = "실시간 이슈 키워드"
-    start = html_text.find(marker)
-
-    if start == -1:
-        raise HTTPException(status_code=502, detail="네이트 실시간 이슈 키워드 영역을 찾지 못했습니다.")
-
-    sliced = html_text[start:start + 20000]
-
-    results = []
-    seen = set()
-
-    # 1차: 현재 네이트 HTML 구조 기준
-    items = re.findall(
-        r'<li>\s*<div class="slide-content">.*?'
-        r'<span class="num_rank">(\d+)</span>.*?'
-        r'<a[^>]*?href="([^"]+)".*?'
-        r'<span class="txt_rank">(.*?)</span>.*?'
-        r'<span class="fc\s+(?:up|down|same|new)">',
-        sliced,
-        flags=re.S | re.I
-    )
-
-    for _, href, raw_keyword in items:
-        keyword = strip_html(raw_keyword)
-
-        if not keyword or len(keyword) < 2:
-            continue
-        if keyword in seen:
-            continue
-
-        seen.add(keyword)
-
-        full_link = href.strip()
-        if full_link.startswith("/"):
-            full_link = "https://www.nate.com" + full_link
-        elif full_link.startswith("https://news.nate.com/search?q="):
-            pass
-        elif not full_link.startswith("http"):
-            full_link = f"https://search.nate.com/search/all.html?q={requests.utils.quote(keyword)}"
-
-        results.append({
-            "keyword": keyword,
-            "rank": len(results) + 1,
-            "category": "네이트",
-            "link": full_link
-        })
-
-        if len(results) >= 10:
-            break
-
-    # 2차 예비 패턴
-    if not results:
-        fallback = re.findall(
-            r'<span class="num_rank">(\d+)</span>.*?<span class="txt_rank">(.*?)</span>',
-            sliced,
-            flags=re.S | re.I
-        )
-
-        for _, raw_keyword in fallback:
-            keyword = strip_html(raw_keyword)
-
-            if not keyword or len(keyword) < 2:
-                continue
-            if keyword in seen:
-                continue
-
-            seen.add(keyword)
-            results.append({
-                "keyword": keyword,
-                "rank": len(results) + 1,
-                "category": "네이트",
-                "link": f"https://search.nate.com/search/all.html?q={requests.utils.quote(keyword)}"
-            })
-
-            if len(results) >= 10:
-                break
-
-    if not results:
-        raise HTTPException(status_code=502, detail="네이트 키워드를 추출하지 못했습니다.")
-
-    return results
+# 🔹 안전 fallback (크롤링 실패 시 앱 죽지 않게)
+def fallback_data(category):
+    return [{
+        "keyword": f"{category} 데이터를 불러올 수 없습니다",
+        "rank": 1,
+        "category": category,
+        "link": "#"
+    }]
 
 
 @app.get("/trends")
 def get_trends(category: str = Query(default="전체")):
-    category = category if category in FEEDS else "전체"
-    url = FEEDS[category]
+    category = category if category in CATEGORIES else "전체"
 
     try:
-        if category == "네이트":
-            html_text = fetch_text(url, timeout=10)
-            data = parse_nate_homepage(html_text)
+        text = fetch(FEEDS[category])
 
-        elif category == "유튜브":
-            text = fetch_text(url, timeout=10)
+        if category == "유튜브":
             data = parse_youtube(text)
-
         else:
-            text = fetch_text(url, timeout=10)
             data = parse_rss(text, category)
 
         if not data:
-            raise HTTPException(status_code=502, detail=f"{category} 데이터 없음")
+            return fallback_data(category)
 
         return data
 
-    except HTTPException:
-        raise
-    except requests.exceptions.RequestException as e:
-        raise HTTPException(status_code=502, detail=f"{category} 요청 실패: {str(e)}")
-    except ET.ParseError as e:
-        raise HTTPException(status_code=502, detail=f"{category} XML 파싱 실패: {str(e)}")
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"{category} 처리 실패: {str(e)}")
-
-
-@app.get("/debug-nate")
-def debug_nate():
-    html_text = fetch_text(FEEDS["네이트"], timeout=10)
-    marker = "실시간 이슈 키워드"
-    start = html_text.find(marker)
-
-    snippet = html_text[start:start + 3000] if start != -1 else html_text[:3000]
-
-    return {
-        "found_marker": start != -1,
-        "final_url": FEEDS["네이트"],
-        "snippet": snippet
-    }
+        print("ERROR:", e)
+        return fallback_data(category)
