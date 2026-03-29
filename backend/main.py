@@ -14,7 +14,7 @@ app.add_middleware(
     allow_headers=["*"]
 )
 
-# PC 브라우저처럼 요청해야 네이트가 모바일로 안 튕김
+# PC 브라우저처럼 요청해야 네이트가 모바일로 튕기지 않음
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -51,12 +51,9 @@ def fetch_response(url: str, timeout: int = 10):
 def fetch_text(url: str, timeout: int = 10) -> str:
     response = fetch_response(url, timeout=timeout)
 
-    # 네이트 HTML은 cp949/euc-kr 계열일 가능성이 높아서 우선 시도
-    for encoding in ("cp949", "euc-kr", "utf-8"):
-        try:
-            return response.content.decode(encoding)
-        except Exception:
-            continue
+    # HTML 인코딩 자동 추정
+    if not response.encoding or response.encoding.lower() == "iso-8859-1":
+        response.encoding = response.apparent_encoding
 
     return response.text
 
@@ -123,6 +120,9 @@ def parse_youtube(xml_text: str):
 def strip_html(text: str) -> str:
     text = re.sub(r"<[^>]+>", " ", text)
     text = re.sub(r"&nbsp;|&#160;", " ", text)
+    text = re.sub(r"&amp;", "&", text)
+    text = re.sub(r"&quot;", '"', text)
+    text = re.sub(r"&#39;", "'", text)
     text = re.sub(r"\s+", " ", text)
     return text.strip()
 
@@ -138,15 +138,17 @@ def parse_nate_homepage(html_text: str):
     if start == -1:
         raise HTTPException(status_code=502, detail="네이트 실시간 이슈 키워드 영역을 찾지 못했습니다.")
 
-    sliced = html_text[start:start + 15000]
+    sliced = html_text[start:start + 20000]
 
     results = []
     seen = set()
 
-    # 1차: 현재 네이트 구조 기준
+    # 1차: 현재 네이트 HTML 구조 기준
     items = re.findall(
-        r'<li>\s*<div class="slide-content">.*?<span class="num_rank">(\d+)</span>.*?'
-        r'<a[^>]*?href="([^"]+)".*?<span class="txt_rank">(.+?)</span>.*?'
+        r'<li>\s*<div class="slide-content">.*?'
+        r'<span class="num_rank">(\d+)</span>.*?'
+        r'<a[^>]*?href="([^"]+)".*?'
+        r'<span class="txt_rank">(.*?)</span>.*?'
         r'<span class="fc\s+(?:up|down|same|new)">',
         sliced,
         flags=re.S | re.I
@@ -162,9 +164,13 @@ def parse_nate_homepage(html_text: str):
 
         seen.add(keyword)
 
-        full_link = href
+        full_link = href.strip()
         if full_link.startswith("/"):
             full_link = "https://www.nate.com" + full_link
+        elif full_link.startswith("https://news.nate.com/search?q="):
+            pass
+        elif not full_link.startswith("http"):
+            full_link = f"https://search.nate.com/search/all.html?q={requests.utils.quote(keyword)}"
 
         results.append({
             "keyword": keyword,
@@ -179,7 +185,7 @@ def parse_nate_homepage(html_text: str):
     # 2차 예비 패턴
     if not results:
         fallback = re.findall(
-            r'<span class="num_rank">(\d+)</span>.*?<span class="txt_rank">(.+?)</span>',
+            r'<span class="num_rank">(\d+)</span>.*?<span class="txt_rank">(.*?)</span>',
             sliced,
             flags=re.S | re.I
         )
