@@ -45,12 +45,19 @@ def fetch_text(url: str, timeout: int = 10) -> str:
     return res.text
 
 
+def decode_nate_bytes(raw: bytes) -> str:
+    for enc in ("utf-8", "cp949", "euc-kr"):
+        try:
+            return raw.decode(enc)
+        except Exception:
+            pass
+    return raw.decode("utf-8", errors="replace")
+
+
 def fetch_nate_json(url: str, timeout: int = 10) -> dict:
     res = fetch_response(url, timeout=timeout)
-
-    # 중요: text 쓰지 말고 bytes -> utf-8 직접 디코드
-    raw = res.content.decode("utf-8", errors="strict")
-    return json.loads(raw)
+    decoded = decode_nate_bytes(res.content)
+    return json.loads(decoded)
 
 
 def strip_namespaces(xml_text: str) -> str:
@@ -119,11 +126,6 @@ def parse_nate(payload: dict):
         raise HTTPException(status_code=502, detail="네이트 data 구조가 이상합니다.")
 
     items = []
-    blocked_exact = {
-        "message", "ok", "data", "result", "service_dtm", "server_dtm",
-        "update_dtm", "keyword_sq", "count", "score", "create_dtm",
-        "mod_dtm", "keyword_service", "ctgr_cd"
-    }
 
     def sort_key(k):
         try:
@@ -142,8 +144,6 @@ def parse_nate(payload: dict):
         if not keyword:
             continue
         if len(keyword) < 2:
-            continue
-        if keyword.lower() in blocked_exact:
             continue
         if re.fullmatch(r"[0-9:\- ]+", keyword):
             continue
@@ -190,9 +190,15 @@ def get_trends(category: str = Query(default="전체")):
 
 @app.get("/debug-nate")
 def debug_nate():
-    payload = fetch_nate_json(FEEDS["네이트"], timeout=10)
+    res = fetch_response(FEEDS["네이트"], timeout=10)
+    raw = res.content
+    decoded_utf8 = raw.decode("utf-8", errors="replace")[:500]
+    decoded_cp949 = raw.decode("cp949", errors="replace")[:500]
+    decoded_euckr = raw.decode("euc-kr", errors="replace")[:500]
+
     return {
-        "result": payload.get("result"),
-        "message": payload.get("message"),
-        "first_item": payload.get("data", {}).get("0", {})
+        "content_type": res.headers.get("content-type"),
+        "utf8_preview": decoded_utf8,
+        "cp949_preview": decoded_cp949,
+        "euckr_preview": decoded_euckr
     }
