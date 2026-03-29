@@ -13,8 +13,6 @@ document.addEventListener('DOMContentLoaded', () => {
     
     document.getElementById('refreshBtn').onclick = () => loadData(currentCategory);
     document.getElementById('searchInput').oninput = (e) => filterData(e.target.value);
-    document.getElementById('closeDetailBtn').onclick = closeDetail;
-    document.getElementById('sheetBackdrop').onclick = closeDetail;
 });
 
 function switchCategory(cat) {
@@ -35,7 +33,7 @@ async function loadData(category) {
         allData = await response.json();
         
         if (!allData || allData.length === 0) {
-            trendList.innerHTML = '<p style="padding:40px; text-align:center;">표시할 데이터가 없습니다.</p>';
+            trendList.innerHTML = '<p style="padding:40px; text-align:center;">표시할 데이터가 없습니다. 😢</p>';
             return;
         }
 
@@ -44,7 +42,7 @@ async function loadData(category) {
         document.getElementById('updatedAt').innerText = new Date().toLocaleTimeString();
     } catch (e) {
         sourceState.innerText = "서버 연결 대기 중";
-        trendList.innerHTML = '<button onclick="location.reload()" class="action-btn" style="margin:40px auto; display:block;">서버 깨우기</button>';
+        trendList.innerHTML = '<button onclick="location.reload()" class="action-btn" style="margin:40px auto; display:block;">서버 깨우기 (터치)</button>';
     }
 }
 
@@ -53,18 +51,13 @@ function renderList(data) {
     container.innerHTML = data.map(item => `
         <div class="trend-item" style="margin-bottom:12px; cursor:pointer;" onclick="window.open('${item.link}', '_blank')">
             <div style="display:flex; align-items:center; gap:15px;">
-                <div style="font-size:20px; font-weight:900; color:#9aa3b2; width:28px;">${item.rank}</div>
+                <div style="font-size:20px; font-weight:900; color:${item.category==='Error'?'#ff4d4d':'#9aa3b2'}; width:28px;">${item.rank}</div>
                 <div style="flex:1;">
                     <div style="font-size:17px; font-weight:700; margin-bottom:4px;">${item.keyword}</div>
                     <div style="font-size:12px; color:#9aa3b2;">${item.category}</div>
                 </div>
             </div>
         </div>`).join('');
-}
-
-function closeDetail() {
-    document.getElementById('sheetBackdrop').classList.add('hidden');
-    document.getElementById('detailSheet').classList.add('hidden');
 }
 
 function filterData(q) {
