@@ -16,11 +16,7 @@ app.add_middleware(
 )
 
 HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) "
-        "AppleWebKit/605.1.15 (KHTML, like Gecko) "
-        "Version/16.0 Mobile/15E148 Safari/604.1"
-    )
+    "User-Agent": "Mozilla/5.0"
 }
 
 FEEDS = {
@@ -37,227 +33,115 @@ FEEDS = {
 }
 
 
-def fetch_text(url: str, timeout: int = 10, encoding=None) -> str:
-    response = requests.get(url, headers=HEADERS, timeout=timeout)
-    response.raise_for_status()
-
-    if encoding:
-        response.encoding = encoding
-
-    return response.text
+def fetch_text(url):
+    res = requests.get(url, headers=HEADERS, timeout=10)
+    res.raise_for_status()
+    return res.text
 
 
-def clean_xml_text(xml_text: str) -> str:
-    return re.sub(r'\sxmlns(:\w+)?="[^"]+"', '', xml_text)
-
-
-def normalize_title(title: str) -> str:
-    text = title.strip()
-    if " - " in text:
-        text = text.split(" - ")[0].strip()
-    return text
-
-
-def parse_standard_rss(xml_text: str, category: str):
-    cleaned = clean_xml_text(xml_text)
-    root = ET.fromstring(cleaned.encode("utf-8"))
+def parse_rss(xml_text, category):
+    xml_text = re.sub(r'\sxmlns(:\w+)?="[^"]+"', '', xml_text)
+    root = ET.fromstring(xml_text.encode("utf-8"))
 
     items = []
     nodes = root.findall(".//item")
 
     for i, node in enumerate(nodes[:20]):
-        title = (node.findtext("title", "") or "").strip()
-        link = (node.findtext("link", "") or "").strip()
+        title = (node.findtext("title") or "").split(" - ")[0].strip()
+        link = node.findtext("link") or ""
 
-        if not title:
-            continue
-
-        items.append({
-            "keyword": normalize_title(title),
-            "rank": i + 1,
-            "category": category,
-            "link": link
-        })
+        if title:
+            items.append({
+                "keyword": title,
+                "rank": i + 1,
+                "category": category,
+                "link": link
+            })
 
     return items
 
 
-def parse_youtube_atom(xml_text: str):
-    cleaned = clean_xml_text(xml_text)
-    root = ET.fromstring(cleaned.encode("utf-8"))
+def parse_youtube(xml_text):
+    xml_text = re.sub(r'\sxmlns(:\w+)?="[^"]+"', '', xml_text)
+    root = ET.fromstring(xml_text.encode("utf-8"))
 
     items = []
     nodes = root.findall(".//entry")
 
     for i, node in enumerate(nodes[:20]):
-        title = (node.findtext("title", "") or "").strip()
-        link = ""
-
+        title = node.findtext("title") or ""
         link_node = node.find("link")
-        if link_node is not None:
-            link = link_node.get("href") or (link_node.text or "")
+        link = link_node.get("href") if link_node is not None else ""
 
-        if not title:
-            continue
-
-        items.append({
-            "keyword": title,
-            "rank": i + 1,
-            "category": "유튜브",
-            "link": link
-        })
+        if title:
+            items.append({
+                "keyword": title,
+                "rank": i + 1,
+                "category": "유튜브",
+                "link": link
+            })
 
     return items
 
 
-def find_keywords_deep(obj, found):
-    if isinstance(obj, dict):
-        for key in ["keyword", "name", "txt", "text", "query", "title", "k"]:
-            value = obj.get(key)
-            if isinstance(value, str):
-                value = value.strip()
-                if len(value) >= 2 and value not in found:
-                    found.append(value)
+# 🔥 핵심: 네이트 전용 파서
+def parse_nate(text):
+    result = []
 
-        for value in obj.values():
-            find_keywords_deep(value, found)
-
-    elif isinstance(obj, list):
-        for item in obj:
-            find_keywords_deep(item, found)
-
-
-def parse_nate_response(text: str):
-    text = text.strip()
-    found = []
-
-    # 1차: JSON 파싱 시도
     try:
-        data = json.loads(text)
-        find_keywords_deep(data, found)
-    except Exception:
-        pass
+        outer = json.loads(text)
 
-    # 2차: 문자열 패턴에서 키워드 후보 추출
-    if not found:
-        matches = re.findall(r'"([^"]{2,40})"', text)
-        for m in matches:
-            value = m.strip()
-            if not re.search(r"[가-힣A-Za-z0-9]", value):
-                continue
-            if value in found:
-                continue
-            found.append(value)
+        # data 안에 있음
+        inner_data = outer.get("data", {})
 
-    blocked = {
-        "success", "result", "data", "list", "keyword",
-        "news", "tab", "value", "rank", "on", "off", "true", "false"
-    }
+        for i, key in enumerate(inner_data):
+            item = inner_data[key]
 
-    cleaned = []
-    for value in found:
-        if value.lower() in blocked:
-            continue
-        if len(value) < 2:
-            continue
-        cleaned.append(value)
-        if len(cleaned) >= 10:
-            break
+            raw = item.get("keyword_name", "")
 
-    return [
-        {
-            "keyword": keyword,
-            "rank": i + 1,
-            "category": "네이트",
-            "link": f"https://search.nate.com/search/all.html?q={keyword}"
-        }
-        for i, keyword in enumerate(cleaned)
-    ]
+            # 🔥 unicode decode
+            keyword = raw.encode().decode("unicode_escape")
 
+            # <br> 제거
+            keyword = re.sub(r"<.*?>", "", keyword).strip()
 
-def clean_item_list(items: list, category: str, limit: int = 20):
-    cleaned = []
+            if keyword:
+                result.append({
+                    "keyword": keyword,
+                    "rank": len(result) + 1,
+                    "category": "네이트",
+                    "link": f"https://search.nate.com/search/all.html?q={keyword}"
+                })
 
-    for item in items:
-        keyword = str(item.get("keyword", "")).strip()
-        link = str(item.get("link", "")).strip()
+            if len(result) >= 10:
+                break
 
-        if not keyword:
-            continue
+    except Exception as e:
+        print("NATE ERROR:", e)
 
-        cleaned.append({
-            "keyword": keyword,
-            "rank": len(cleaned) + 1,
-            "category": category,
-            "link": link
-        })
-
-        if len(cleaned) >= limit:
-            break
-
-    return cleaned
+    return result
 
 
 @app.get("/trends")
 def get_trends(category: str = Query(default="전체")):
-    selected_category = category if category in FEEDS else "전체"
-    url = FEEDS[selected_category]
+    url = FEEDS.get(category, FEEDS["전체"])
 
     try:
-        if selected_category == "네이트":
-            text = fetch_text(url, timeout=8, encoding="utf-8")
-            data = parse_nate_response(text)
-            data = clean_item_list(data, "네이트", 10)
+        text = fetch_text(url)
 
-        elif selected_category == "유튜브":
-            text = fetch_text(url, timeout=10)
-            data = parse_youtube_atom(text)
-            data = clean_item_list(data, "유튜브", 20)
+        if category == "네이트":
+            data = parse_nate(text)
 
-        elif selected_category == "웃긴대학":
-            text = fetch_text(url, timeout=10)
-            data = parse_standard_rss(text, "웃긴대학")
-            data = clean_item_list(data, "웃긴대학", 20)
-
-        elif selected_category == "보배드림":
-            text = fetch_text(url, timeout=10)
-            data = parse_standard_rss(text, "보배드림")
-            data = clean_item_list(data, "보배드림", 20)
+        elif category == "유튜브":
+            data = parse_youtube(text)
 
         else:
-            text = fetch_text(url, timeout=10)
-            data = parse_standard_rss(text, selected_category)
-            data = clean_item_list(data, selected_category, 20)
+            data = parse_rss(text, category)
 
         if not data:
-            raise HTTPException(
-                status_code=502,
-                detail=f"{selected_category} 데이터가 비어 있습니다."
-            )
+            raise HTTPException(502, detail=f"{category} 데이터 없음")
 
         return data
 
-    except requests.exceptions.RequestException as e:
-        raise HTTPException(
-            status_code=502,
-            detail=f"{selected_category} 요청 실패: {str(e)}"
-        )
-    except ET.ParseError as e:
-        raise HTTPException(
-            status_code=502,
-            detail=f"{selected_category} XML 파싱 실패: {str(e)}"
-        )
-    except HTTPException:
-        raise
     except Exception as e:
-        raise HTTPException(
-            status_code=502,
-            detail=f"{selected_category} 처리 실패: {str(e)}"
-        )
-
-
-@app.get("/debug-nate")
-def debug_nate():
-    url = FEEDS["네이트"]
-    text = fetch_text(url, timeout=8, encoding="utf-8")
-    return {"preview": text[:3000]}
+        raise HTTPException(502, detail=str(e))
