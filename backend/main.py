@@ -45,19 +45,9 @@ def fetch_text(url: str, timeout: int = 10) -> str:
     return res.text
 
 
-def decode_nate_bytes(raw: bytes) -> str:
-    for enc in ("utf-8", "cp949", "euc-kr"):
-        try:
-            return raw.decode(enc)
-        except Exception:
-            pass
-    return raw.decode("utf-8", errors="replace")
-
-
-def fetch_nate_json(url: str, timeout: int = 10) -> dict:
+def fetch_json(url: str, timeout: int = 10) -> dict:
     res = fetch_response(url, timeout=timeout)
-    decoded = decode_nate_bytes(res.content)
-    return json.loads(decoded)
+    return res.json()
 
 
 def strip_namespaces(xml_text: str) -> str:
@@ -112,7 +102,17 @@ def parse_youtube(xml_text: str):
     return items
 
 
-def clean_html_text(text: str) -> str:
+def decode_nate_keyword(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+
+    # \\uXXXX 형태를 실제 한글로 변환
+    try:
+        text = text.encode("utf-8").decode("unicode_escape")
+    except Exception:
+        pass
+
     text = html.unescape(text)
     text = re.sub(r"<br\s*/?>", " ", text, flags=re.I)
     text = re.sub(r"<[^>]+>", "", text)
@@ -138,8 +138,7 @@ def parse_nate(payload: dict):
         if not isinstance(entry, dict):
             continue
 
-        keyword = str(entry.get("keyword_name", "")).strip()
-        keyword = clean_html_text(keyword)
+        keyword = decode_nate_keyword(entry.get("keyword_name", ""))
 
         if not keyword:
             continue
@@ -168,7 +167,7 @@ def get_trends(category: str = Query(default="전체")):
 
     try:
         if category == "네이트":
-            payload = fetch_nate_json(url, timeout=10)
+            payload = fetch_json(url, timeout=10)
             data = parse_nate(payload)
         elif category == "유튜브":
             text = fetch_text(url, timeout=10)
@@ -190,15 +189,15 @@ def get_trends(category: str = Query(default="전체")):
 
 @app.get("/debug-nate")
 def debug_nate():
-    res = fetch_response(FEEDS["네이트"], timeout=10)
-    raw = res.content
-    decoded_utf8 = raw.decode("utf-8", errors="replace")[:500]
-    decoded_cp949 = raw.decode("cp949", errors="replace")[:500]
-    decoded_euckr = raw.decode("euc-kr", errors="replace")[:500]
+    payload = fetch_json(FEEDS["네이트"], timeout=10)
+    first_item = payload.get("data", {}).get("0", {})
+    raw_keyword = first_item.get("keyword_name", "")
+    decoded_keyword = decode_nate_keyword(raw_keyword)
 
     return {
-        "content_type": res.headers.get("content-type"),
-        "utf8_preview": decoded_utf8,
-        "cp949_preview": decoded_cp949,
-        "euckr_preview": decoded_euckr
+        "result": payload.get("result"),
+        "message": payload.get("message"),
+        "raw_keyword_name": raw_keyword,
+        "decoded_keyword_name": decoded_keyword,
+        "first_item": first_item
     }
