@@ -14,11 +14,12 @@ app.add_middleware(
     allow_headers=["*"]
 )
 
+# PC 브라우저로 위장해야 네이트가 m.nate.com으로 튕기지 않음
 HEADERS = {
     "User-Agent": (
-        "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) "
-        "AppleWebKit/605.1.15 (KHTML, like Gecko) "
-        "Version/16.0 Mobile/15E148 Safari/604.1"
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/122.0.0.0 Safari/537.36"
     )
 }
 
@@ -37,14 +38,14 @@ FEEDS = {
 
 
 def fetch_response(url: str, timeout: int = 10):
-    res = requests.get(url, headers=HEADERS, timeout=timeout)
-    res.raise_for_status()
-    return res
+    response = requests.get(url, headers=HEADERS, timeout=timeout, allow_redirects=True)
+    response.raise_for_status()
+    return response
 
 
 def fetch_text(url: str, timeout: int = 10) -> str:
-    res = fetch_response(url, timeout=timeout)
-    return res.text
+    response = fetch_response(url, timeout=timeout)
+    return response.text
 
 
 def strip_namespaces(xml_text: str) -> str:
@@ -52,10 +53,10 @@ def strip_namespaces(xml_text: str) -> str:
 
 
 def normalize_title(title: str) -> str:
-    title = (title or "").strip()
-    if " - " in title:
-        title = title.split(" - ")[0].strip()
-    return title
+    text = (title or "").strip()
+    if " - " in text:
+        text = text.split(" - ")[0].strip()
+    return text
 
 
 def parse_rss(xml_text: str, category: str):
@@ -111,22 +112,27 @@ def strip_html(text: str) -> str:
 
 
 def parse_nate_homepage(html_text: str):
-    text = html_text
+    # 모바일 리다이렉트가 오면 실패 처리
+    if "location.href='http://m.nate.com/" in html_text or 'location.href="http://m.nate.com/' in html_text:
+        raise HTTPException(status_code=502, detail="네이트가 모바일 페이지로 리다이렉트되었습니다.")
 
-    # "실시간 이슈 키워드" 섹션 근처만 잘라서 사용
     marker = "실시간 이슈 키워드"
-    start = text.find(marker)
+    start = html_text.find(marker)
+
     if start == -1:
-        raise HTTPException(status_code=502, detail="네이트 실시간 이슈 키워드 섹션을 찾지 못했습니다.")
+        raise HTTPException(status_code=502, detail="네이트 실시간 이슈 키워드 영역을 찾지 못했습니다.")
 
-    sliced = text[start:start + 5000]
-
-    # 숫자 순위 + 키워드 패턴 추출
-    # 예: 1. 6 프리지아 갤럭시 유저 상승 29
-    pattern = re.findall(r'>\s*(\d+)\.\s*(?:\d+\s+)?([^<]+?)\s*(?:상승|하락|new|동일)', sliced, flags=re.I)
+    sliced = html_text[start:start + 10000]
 
     results = []
     seen = set()
+
+    # 1차 패턴
+    pattern = re.findall(
+        r'>\s*(\d+)\.\s*(?:\d+\s+)?([^<]+?)\s*(?:상승|하락|new|동일)',
+        sliced,
+        flags=re.I
+    )
 
     for _, raw_keyword in pattern:
         keyword = strip_html(raw_keyword)
@@ -148,12 +154,17 @@ def parse_nate_homepage(html_text: str):
         if len(results) >= 10:
             break
 
-    # 혹시 위 패턴이 안 맞으면 예비 패턴
+    # 2차 예비 패턴
     if not results:
-        fallback = re.findall(r'실시간 이슈 키워드.*?(?:<li[^>]*>.*?</li>){1,15}', sliced, flags=re.S)
-        if fallback:
-            block = fallback[0]
-            li_texts = re.findall(r'<li[^>]*>(.*?)</li>', block, flags=re.S)
+        block_match = re.search(
+            r'실시간 이슈 키워드.*?(<li[^>]*>.*?</li>){3,20}',
+            sliced,
+            flags=re.S
+        )
+
+        if block_match:
+            li_texts = re.findall(r'<li[^>]*>(.*?)</li>', block_match.group(0), flags=re.S)
+
             for li in li_texts:
                 cleaned = strip_html(li)
                 cleaned = re.sub(r'^\d+\s*', '', cleaned)
@@ -204,8 +215,12 @@ def get_trends(category: str = Query(default="전체")):
 
     except HTTPException:
         raise
+    except requests.exceptions.RequestException as e:
+        raise HTTPException(status_code=502, detail=f"{category} 요청 실패: {str(e)}")
+    except ET.ParseError as e:
+        raise HTTPException(status_code=502, detail=f"{category} XML 파싱 실패: {str(e)}")
     except Exception as e:
-        raise HTTPException(status_code=502, detail=str(e))
+        raise HTTPException(status_code=502, detail=f"{category} 처리 실패: {str(e)}")
 
 
 @app.get("/debug-nate")
@@ -213,8 +228,11 @@ def debug_nate():
     html_text = fetch_text(FEEDS["네이트"], timeout=10)
     marker = "실시간 이슈 키워드"
     start = html_text.find(marker)
+
     snippet = html_text[start:start + 3000] if start != -1 else html_text[:3000]
+
     return {
         "found_marker": start != -1,
+        "final_url": FEEDS["네이트"],
         "snippet": snippet
     }
