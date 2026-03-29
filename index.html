@@ -15,7 +15,6 @@
 
   <link rel="manifest" href="./manifest.json" />
   <link rel="stylesheet" href="./styles.css" />
-
   <link rel="apple-touch-icon" href="./icons/icon-192.png" />
 </head>
 <body>
@@ -33,7 +32,8 @@
     <section class="trend-item" style="margin-top:18px;">
       <h2 style="margin:0 0 12px; font-size:22px;">지금 뜨는 이슈를 빠르게 확인</h2>
       <p style="margin:0 0 18px; color:#d8deea; line-height:1.55;">
-        실시간 뉴스 RSS를 읽어 이슈를 묶어서 보여줘요. 연결이 안 될 때는 마지막 저장 데이터나 샘플 데이터를 보여줘요.
+        실시간 뉴스 RSS와 외부 소스를 읽어 이슈를 보여줘요.
+        연결이 안 될 때는 오류 이유를 바로 보여줘요.
       </p>
 
       <div style="font-size:14px; color:#9aa3b2; margin-bottom:6px;">업데이트 시간</div>
@@ -65,10 +65,7 @@
     <section id="trendList"></section>
   </main>
 
-  <!-- 상세 시트 -->
-  <div id="sheetBackdrop" class="hidden" style="
-    position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:99;
-  "></div>
+  <div id="sheetBackdrop" class="hidden" style="position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:99;"></div>
 
   <section id="detailSheet" class="hidden" style="
     position:fixed; left:0; right:0; bottom:0;
@@ -98,10 +95,7 @@
     <div id="detailLinks" style="margin-top:18px;"></div>
   </section>
 
-  <!-- 즐겨찾기 시트 -->
-  <div id="favoritesBackdrop" class="hidden" style="
-    position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:109;
-  "></div>
+  <div id="favoritesBackdrop" class="hidden" style="position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:109;"></div>
 
   <section id="favoritesSheet" class="hidden" style="
     position:fixed; left:0; right:0; bottom:0;
