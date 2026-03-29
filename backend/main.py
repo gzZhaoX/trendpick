@@ -14,7 +14,7 @@ app.add_middleware(
     allow_headers=["*"]
 )
 
-# PC 브라우저로 위장해야 네이트가 m.nate.com으로 튕기지 않음
+# PC 브라우저처럼 요청해야 네이트가 모바일로 안 튕김
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -38,13 +38,26 @@ FEEDS = {
 
 
 def fetch_response(url: str, timeout: int = 10):
-    response = requests.get(url, headers=HEADERS, timeout=timeout, allow_redirects=True)
+    response = requests.get(
+        url,
+        headers=HEADERS,
+        timeout=timeout,
+        allow_redirects=True
+    )
     response.raise_for_status()
     return response
 
 
 def fetch_text(url: str, timeout: int = 10) -> str:
     response = fetch_response(url, timeout=timeout)
+
+    # 네이트 HTML은 cp949/euc-kr 계열일 가능성이 높아서 우선 시도
+    for encoding in ("cp949", "euc-kr", "utf-8"):
+        try:
+            return response.content.decode(encoding)
+        except Exception:
+            continue
+
     return response.text
 
 
@@ -88,8 +101,11 @@ def parse_youtube(xml_text: str):
     items = []
     for i, node in enumerate(root.findall(".//entry")[:20]):
         title = (node.findtext("title") or "").strip()
+
         link_node = node.find("link")
-        link = link_node.get("href") if link_node is not None else ""
+        link = ""
+        if link_node is not None:
+            link = link_node.get("href") or (link_node.text or "")
 
         if not title:
             continue
@@ -112,7 +128,7 @@ def strip_html(text: str) -> str:
 
 
 def parse_nate_homepage(html_text: str):
-    # 모바일 리다이렉트가 오면 실패 처리
+    # 모바일 리다이렉트 감지
     if "location.href='http://m.nate.com/" in html_text or 'location.href="http://m.nate.com/' in html_text:
         raise HTTPException(status_code=502, detail="네이트가 모바일 페이지로 리다이렉트되었습니다.")
 
@@ -122,21 +138,22 @@ def parse_nate_homepage(html_text: str):
     if start == -1:
         raise HTTPException(status_code=502, detail="네이트 실시간 이슈 키워드 영역을 찾지 못했습니다.")
 
-    sliced = html_text[start:start + 10000]
+    sliced = html_text[start:start + 15000]
 
     results = []
     seen = set()
 
-    # 1차 패턴
-    pattern = re.findall(
-        r'>\s*(\d+)\.\s*(?:\d+\s+)?([^<]+?)\s*(?:상승|하락|new|동일)',
+    # 1차: 현재 네이트 구조 기준
+    items = re.findall(
+        r'<li>\s*<div class="slide-content">.*?<span class="num_rank">(\d+)</span>.*?'
+        r'<a[^>]*?href="([^"]+)".*?<span class="txt_rank">(.+?)</span>.*?'
+        r'<span class="fc\s+(?:up|down|same|new)">',
         sliced,
-        flags=re.I
+        flags=re.S | re.I
     )
 
-    for _, raw_keyword in pattern:
+    for _, href, raw_keyword in items:
         keyword = strip_html(raw_keyword)
-        keyword = re.sub(r"\s+", " ", keyword).strip()
 
         if not keyword or len(keyword) < 2:
             continue
@@ -144,11 +161,16 @@ def parse_nate_homepage(html_text: str):
             continue
 
         seen.add(keyword)
+
+        full_link = href
+        if full_link.startswith("/"):
+            full_link = "https://www.nate.com" + full_link
+
         results.append({
             "keyword": keyword,
             "rank": len(results) + 1,
             "category": "네이트",
-            "link": f"https://search.nate.com/search/all.html?q={requests.utils.quote(keyword)}"
+            "link": full_link
         })
 
         if len(results) >= 10:
@@ -156,35 +178,30 @@ def parse_nate_homepage(html_text: str):
 
     # 2차 예비 패턴
     if not results:
-        block_match = re.search(
-            r'실시간 이슈 키워드.*?(<li[^>]*>.*?</li>){3,20}',
+        fallback = re.findall(
+            r'<span class="num_rank">(\d+)</span>.*?<span class="txt_rank">(.+?)</span>',
             sliced,
-            flags=re.S
+            flags=re.S | re.I
         )
 
-        if block_match:
-            li_texts = re.findall(r'<li[^>]*>(.*?)</li>', block_match.group(0), flags=re.S)
+        for _, raw_keyword in fallback:
+            keyword = strip_html(raw_keyword)
 
-            for li in li_texts:
-                cleaned = strip_html(li)
-                cleaned = re.sub(r'^\d+\s*', '', cleaned)
-                cleaned = re.sub(r'\b(상승|하락|new|동일)\b.*$', '', cleaned, flags=re.I).strip()
+            if not keyword or len(keyword) < 2:
+                continue
+            if keyword in seen:
+                continue
 
-                if not cleaned or len(cleaned) < 2:
-                    continue
-                if cleaned in seen:
-                    continue
+            seen.add(keyword)
+            results.append({
+                "keyword": keyword,
+                "rank": len(results) + 1,
+                "category": "네이트",
+                "link": f"https://search.nate.com/search/all.html?q={requests.utils.quote(keyword)}"
+            })
 
-                seen.add(cleaned)
-                results.append({
-                    "keyword": cleaned,
-                    "rank": len(results) + 1,
-                    "category": "네이트",
-                    "link": f"https://search.nate.com/search/all.html?q={requests.utils.quote(cleaned)}"
-                })
-
-                if len(results) >= 10:
-                    break
+            if len(results) >= 10:
+                break
 
     if not results:
         raise HTTPException(status_code=502, detail="네이트 키워드를 추출하지 못했습니다.")
@@ -201,9 +218,11 @@ def get_trends(category: str = Query(default="전체")):
         if category == "네이트":
             html_text = fetch_text(url, timeout=10)
             data = parse_nate_homepage(html_text)
+
         elif category == "유튜브":
             text = fetch_text(url, timeout=10)
             data = parse_youtube(text)
+
         else:
             text = fetch_text(url, timeout=10)
             data = parse_rss(text, category)
