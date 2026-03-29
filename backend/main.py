@@ -1,13 +1,27 @@
+import re
 import requests
 import xml.etree.ElementTree as ET
-import re
-from fastapi import FastAPI, Query
+
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-# 더 안정적인 URL로 교체
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"]
+)
+
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) "
+        "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+        "Version/16.0 Mobile/15E148 Safari/604.1"
+    )
+}
+
 FEEDS = {
     "전체": "https://news.google.com/rss?hl=ko&gl=KR&ceid=KR:ko",
     "정치": "https://news.google.com/rss/headlines/section/topic/POLITICS?hl=ko&gl=KR&ceid=KR:ko",
@@ -15,45 +29,203 @@ FEEDS = {
     "스포츠": "https://news.google.com/rss/headlines/section/topic/SPORTS?hl=ko&gl=KR&ceid=KR:ko",
     "연예": "https://news.google.com/rss/search?q=연예 OR 배우 OR 가수&hl=ko&gl=KR&ceid=KR:ko",
     "게임": "https://news.google.com/rss/search?q=게임 OR 스팀 OR 닌텐도&hl=ko&gl=KR&ceid=KR:ko",
-    "유튜브": "https://www.youtube.com/feeds/videos.xml?chart=mostPopular&regionCode=KR",
-    "웃긴대학": "http://web.humoruniv.com/rss/best.xml", # 주소 업데이트
+
+    # 추가 소스
+    "유튜브": "https://www.youtube.com/feeds/videos.xml?channel_id=UC_x5XG1OV2P6uZZ5FSM9Ttw",
+    "웃긴대학": "https://web.humoruniv.com/rss/best.xml",
     "보배드림": "https://m.bobaedream.co.kr/board/bbs/best/rss",
     "네이트": "https://www.nate.com/js/data/keywordList.js"
 }
 
+
+def fetch_text(url: str, timeout: int = 10, encoding: str | None = None) -> str:
+    response = requests.get(url, headers=HEADERS, timeout=timeout)
+    response.raise_for_status()
+
+    if encoding:
+        response.encoding = encoding
+        return response.text
+
+    return response.text
+
+
+def clean_xml_text(xml_text: str) -> str:
+    return re.sub(r'\sxmlns(:\w+)?="[^"]+"', '', xml_text)
+
+
+def parse_standard_rss(xml_text: str, category: str):
+    cleaned = clean_xml_text(xml_text)
+    root = ET.fromstring(cleaned.encode("utf-8"))
+
+    items = []
+    nodes = root.findall(".//item")
+
+    for i, node in enumerate(nodes[:20]):
+        title = (node.findtext("title", "") or "").strip()
+        link = (node.findtext("link", "") or "").strip()
+
+        if not title:
+            continue
+
+        items.append({
+            "keyword": normalize_title(title),
+            "rank": i + 1,
+            "category": category,
+            "link": link
+        })
+
+    return items
+
+
+def parse_youtube_atom(xml_text: str):
+    cleaned = clean_xml_text(xml_text)
+    root = ET.fromstring(cleaned.encode("utf-8"))
+
+    items = []
+    nodes = root.findall(".//entry")
+
+    for i, node in enumerate(nodes[:20]):
+        title = (node.findtext("title", "") or "").strip()
+        link = ""
+
+        link_node = node.find("link")
+        if link_node is not None:
+            link = link_node.get("href") or (link_node.text or "")
+
+        if not title:
+            continue
+
+        items.append({
+            "keyword": title,
+            "rank": i + 1,
+            "category": "유튜브",
+            "link": link
+        })
+
+    return items
+
+
+def parse_nate_keywords(js_text: str):
+    matches = re.findall(r'"([^"]+)"', js_text)
+
+    keywords = []
+    blocked_words = {
+        "on", "off", "false", "true", "null", "undefined",
+        "button", "click", "list", "news", "keyword"
+    }
+
+    for value in matches:
+        text = value.strip()
+
+        if len(text) < 2:
+            continue
+        if text.lower() in blocked_words:
+            continue
+        if not re.search(r"[가-힣A-Za-z0-9]", text):
+            continue
+        if text in keywords:
+            continue
+
+        keywords.append(text)
+
+    result = []
+    for i, keyword in enumerate(keywords[:10]):
+        result.append({
+            "keyword": keyword,
+            "rank": i + 1,
+            "category": "네이트",
+            "link": f"https://search.nate.com/search/all.html?q={keyword}"
+        })
+
+    return result
+
+
+def normalize_title(title: str) -> str:
+    text = title.strip()
+
+    # 구글뉴스 제목에서 언론사 꼬리 제거
+    if " - " in text:
+        text = text.split(" - ")[0].strip()
+
+    return text
+
+
+def clean_item_list(items: list, category: str, limit: int = 20):
+    cleaned = []
+
+    for item in items:
+        keyword = str(item.get("keyword", "")).strip()
+        link = str(item.get("link", "")).strip()
+
+        if not keyword:
+            continue
+
+        cleaned.append({
+            "keyword": keyword,
+            "rank": len(cleaned) + 1,
+            "category": category,
+            "link": link
+        })
+
+        if len(cleaned) >= limit:
+            break
+
+    return cleaned
+
+
 @app.get("/trends")
-def get_trends(category: str = "전체"):
-    url = FEEDS.get(category, FEEDS["전체"])
-    headers = {'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0.3 Mobile/15E148 Safari/604.1'}
-    
+def get_trends(category: str = Query(default="전체")):
+    selected_category = category if category in FEEDS else "전체"
+    url = FEEDS[selected_category]
+
     try:
-        if category == "네이트":
-            res = requests.get(url, timeout=5)
-            res.encoding = 'euc-kr'
-            matches = re.findall(r'\"([^\"]+)\"', res.text)
-            keywords = [k for k in matches if re.search('[가-힣]', k) and len(k) > 1][:10]
-            return [{"keyword": k, "rank": i+1, "category": "네이트", "link": f"https://search.daum.net/search?q={k}"} for i, k in enumerate(keywords)]
+        if selected_category == "네이트":
+            text = fetch_text(url, timeout=8, encoding="euc-kr")
+            data = parse_nate_keywords(text)
+            data = clean_item_list(data, "네이트", 10)
 
-        res = requests.get(url, headers=headers, timeout=10)
-        res.raise_for_status()
-        
-        # XML 세척 (유튜브 등 네임스페이스 제거)
-        clean_xml = re.sub(r'\sxmlns(:\w+)?="[^"]+"', '', res.text)
-        root = ET.fromstring(clean_xml.encode('utf-8'))
-        
-        items = []
-        nodes = root.findall(".//entry") if "youtube" in url else root.findall(".//item")
-        
-        for i, node in enumerate(nodes[:20]):
-            title = node.findtext("title", "").split(" - ")[0].strip()
-            link = ""
-            l_node = node.find("link")
-            if l_node is not None:
-                link = l_node.get("href") or l_node.text or ""
-            if title: items.append({"keyword": title, "rank": i+1, "category": category, "link": link})
-            
-        return items if items else [{"keyword": "Error", "message": "No Data"}]
+        elif selected_category == "유튜브":
+            text = fetch_text(url, timeout=10)
+            data = parse_youtube_atom(text)
+            data = clean_item_list(data, "유튜브", 20)
 
+        elif selected_category == "웃긴대학":
+            text = fetch_text(url, timeout=10)
+            data = parse_standard_rss(text, "웃긴대학")
+            data = clean_item_list(data, "웃긴대학", 20)
+
+        elif selected_category == "보배드림":
+            text = fetch_text(url, timeout=10)
+            data = parse_standard_rss(text, "보배드림")
+            data = clean_item_list(data, "보배드림", 20)
+
+        else:
+            text = fetch_text(url, timeout=10)
+            data = parse_standard_rss(text, selected_category)
+            data = clean_item_list(data, selected_category, 20)
+
+        if not data:
+            raise HTTPException(
+                status_code=502,
+                detail=f"{selected_category} 데이터가 비어 있습니다."
+            )
+
+        return data
+
+    except requests.exceptions.RequestException as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"{selected_category} 요청 실패: {str(e)}"
+        )
+    except ET.ParseError as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"{selected_category} XML 파싱 실패: {str(e)}"
+        )
+    except HTTPException:
+        raise
     except Exception as e:
-        # 에러 발생 시 프론트엔드가 프록시로 갈아탈 수 있도록 에러 신호를 보냄
-        return {"error": str(e)}
+        raise HTTPException(
+            status_code=502,
+            detail=f"{selected_category} 처리 실패: {str(e)}"
+        )
