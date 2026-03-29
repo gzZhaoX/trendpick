@@ -1,10 +1,8 @@
-from fastapi import FastAPI, Query, Body
+from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 import requests
 import xml.etree.ElementTree as ET
-import time
 import re
-from collections import defaultdict
 
 app = FastAPI()
 
@@ -16,7 +14,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 데이터 소스 확장
+# 데이터 소스 정의
 CATEGORY_FEEDS = {
     "전체": "https://news.google.com/rss?hl=ko&gl=KR&ceid=KR:ko",
     "정치": "https://news.google.com/rss/headlines/section/topic/POLITICS?hl=ko&gl=KR&ceid=KR:ko",
@@ -29,76 +27,59 @@ CATEGORY_FEEDS = {
     "보배드림": "https://m.bobaedream.co.kr/board/bbs/best/rss"
 }
 
-CACHE = {}
-PREV_CACHE = {}
-CACHE_TTL = 300 # 5분 캐시
-
-VIEW_COUNTS = defaultdict(int)
-
-def clean_title(title):
-    return title.split(" - ")[0].strip()
-
-def extract_main_keyword(title):
-    words = re.findall(r"[가-힣A-Za-z0-9]{2,}", title)
-    return words[0] if words else title[:5]
-
-@app.get("/")
-def root():
-    return {"status": "ok", "message": "TrendPick API is running"}
-
 @app.get("/trends")
-def trends(category: str = Query("전체"), limit: int = Query(20)):
-    # 1. 네이트 실검 처리 (특수 케이스)
+def trends(category: str = Query("전체")):
+    # 1. 네이트 실검 처리
     if category == "네이트":
-        return get_nate_trends()
+        try:
+            url = "https://www.nate.com/js/data/keywordList.js"
+            res = requests.get(url, timeout=5)
+            # 네이트 특유의 인코딩(EUC-KR) 강제 설정
+            res.encoding = 'euc-kr' 
+            content = res.text
+            # 키워드 추출용 정규식
+            matches = re.findall(r"\[\d+,\s*\"(.*?)\"", content)
+            
+            return [{
+                "keyword": k, "rank": i, "category": "네이트",
+                "summary": f"네이트 실시간 이슈: {k}",
+                "link": f"https://search.daum.net/search?q={k}"
+            } for i, k in enumerate(matches[:10], start=1)]
+        except:
+            return []
 
-    # 2. 일반 RSS 처리 (구글, 유튜브, 커뮤니티)
+    # 2. 구글/유튜브/커뮤니티 처리
     url = CATEGORY_FEEDS.get(category, CATEGORY_FEEDS["전체"])
     try:
-        res = requests.get(url, timeout=10)
-        res.raise_for_status()
-        xml_data = ET.fromstring(res.content)
+        # 차단 방지를 위한 User-Agent 추가
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        res = requests.get(url, headers=headers, timeout=8)
+        root = ET.fromstring(res.content)
         
         result = []
-        # 유튜브는 entry 태그, 나머지는 item 태그 사용
-        items = xml_data.findall(".//entry") if "youtube" in url else xml_data.findall(".//item")
+        # 유튜브(Atom 형식)와 일반 RSS 형식 구분
+        is_youtube = "youtube" in url
+        items = root.findall(".//{http://www.w3.org/2005/Atom}entry") if is_youtube else root.findall(".//item")
         
-        for i, item in enumerate(items[:limit], start=1):
-            title = item.findtext("title", "제목 없음")
-            # 유튜브 링크와 일반 RSS 링크 방식이 다름
+        for i, item in enumerate(items[:20], start=1):
+            title = ""
             link = ""
-            if "youtube" in url:
+            
+            if is_youtube:
+                title = item.findtext("{http://www.w3.org/2005/Atom}title", "제목 없음")
                 link_tag = item.find("{http://www.w3.org/2005/Atom}link")
                 link = link_tag.get("href") if link_tag is not None else ""
             else:
+                title = item.findtext("title", "제목 없음").split(" - ")[0]
                 link = item.findtext("link", "")
 
             result.append({
-                "keyword": clean_title(title),
+                "keyword": title.strip(),
                 "rank": i,
                 "category": category,
-                "summary": title,
-                "link": link,
-                "views": VIEW_COUNTS.get(title, 0)
+                "summary": title.strip(),
+                "link": link
             })
         return result
-    except Exception as e:
-        return {"error": str(e)}
-
-def get_nate_trends():
-    url = "https://www.nate.com/js/data/keywordList.js"
-    res = requests.get(url)
-    content = res.content.decode('euc-kr') # 네이트는 euc-kr 사용
-    matches = re.findall(r"\[\d+,\s*\"(.*?)\"", content)
-    
-    result = []
-    for i, keyword in enumerate(matches[:10], start=1):
-        result.append({
-            "keyword": keyword,
-            "rank": i,
-            "category": "네이트",
-            "summary": f"네이트 실시간 이슈: {keyword}",
-            "link": f"https://search.daum.net/search?q={keyword}",
-            "views": 0
-        })
-    return result
+    except:
+        return []
