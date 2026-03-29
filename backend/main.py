@@ -1,18 +1,11 @@
-from fastapi import FastAPI, Query
-from fastapi.middleware.cors import CORSMiddleware
 import requests
 import xml.etree.ElementTree as ET
 import re
+from fastapi import FastAPI, Query
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 FEEDS = {
     "전체": "https://news.google.com/rss?hl=ko&gl=KR&ceid=KR:ko",
@@ -31,49 +24,45 @@ FEEDS = {
 def get_trends(category: str = "전체"):
     url = FEEDS.get(category, FEEDS["전체"])
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
-
+    
     try:
-        # 1. 네이트 전용 (가장 단순한 방식으로 추출)
         if category == "네이트":
             res = requests.get(url, timeout=5)
             res.encoding = 'euc-kr'
-            keywords = re.findall(r'"([^"]+)"', res.text) # 모든 따옴표 안의 글자 추출
-            # 순위 데이터만 필터링 (한글이 포함된 2글자 이상 키워드)
-            result = []
-            rank = 1
-            for k in keywords:
-                if re.search('[가-힣]', k) and len(k) >= 2 and k != "up" and k != "down":
-                    result.append({"keyword": k, "rank": rank, "category": "네이트", "link": f"https://search.daum.net/search?q={k}"})
-                    rank += 1
-                    if rank > 10: break
-            return result
+            # 네이트 키워드 패턴 추출
+            raw_keywords = re.findall(r'\[\d+,\s*"([^"]+)"', res.text)
+            return [{"keyword": k, "rank": i+1, "category": "네이트", "link": f"https://search.daum.net/search?q={k}"} for i, k in enumerate(raw_keywords[:10])]
 
-        # 2. RSS (유튜브, 구글, 커뮤니티) - 무조건 파싱하는 방식
         res = requests.get(url, headers=headers, timeout=10)
-        # XML 이름표(Namespace)를 싹 지워서 파싱 에러 방지
-        xml_content = re.sub(r'\sxmlns="[^"]+"', '', res.text)
-        xml_content = re.sub(r'\sxmlns:[^=]+="[^"]+"', '', xml_content)
-        root = ET.fromstring(xml_content.encode('utf-8'))
+        text = res.text
         
         items = []
-        # 'item' 태그나 'entry' 태그를 모두 찾음
-        for node in root.findall(".//item") or root.findall(".//entry"):
-            title = node.findtext("title", "").split(" - ")[0].strip()
-            # 링크 찾기 (유튜브는 link 태그의 href 속성, RSS는 link 태그의 텍스트)
-            link = ""
-            link_node = node.find("link")
-            if link_node is not None:
-                link = link_node.get("href") or link_node.text or ""
+        try:
+            # XML 이름표(Namespace) 강제 제거 (유튜브 해결 핵심)
+            clean_xml = re.sub(r'\sxmlns="[^"]+"', '', text, count=1)
+            root = ET.fromstring(clean_xml.encode('utf-8'))
             
-            if title:
-                items.append({"title": title, "link": link})
+            nodes = root.findall(".//entry") if "youtube" in url else root.findall(".//item")
+            for i, node in enumerate(nodes[:20]):
+                title = node.findtext("title", "").split(" - ")[0].strip()
+                link = ""
+                l_node = node.find("link")
+                if l_node is not None:
+                    link = l_node.get("href") or l_node.text or ""
+                if title: items.append({"keyword": title, "link": link})
+        except:
+            # XML 파싱 실패 시 정규식으로 강제 추출 (최후의 보루)
+            titles = re.findall(r'<title>(.*?)</title>', text)
+            links = re.findall(r'<link>(.*?)</link>', text)
+            for t, l in zip(titles[1:21], links[1:21]):
+                clean_t = re.sub(r'<!\[CDATA\[|\]\]>', '', t).strip()
+                if clean_t and category not in clean_t: # 채널명 제외
+                    items.append({"keyword": clean_t, "link": l})
 
-        return [{
-            "keyword": item["title"],
-            "rank": i,
-            "category": category,
-            "link": item["link"]
-        } for i, item in enumerate(items[:20], start=1)]
+        if not items: 
+            return [{"keyword": "데이터 없음 (차단 가능성)", "rank": "!", "category": "Error", "link": "#"}]
+        
+        return [{"keyword": it["keyword"], "rank": i+1, "category": category, "link": it["link"]} for i, it in enumerate(items)]
 
     except Exception as e:
-        return [{"keyword": f"{category} 로딩 실패", "rank": "!", "category": "Error", "link": "#"}]
+        return [{"keyword": f"에러: {str(e)}", "rank": "X", "category": "Error", "link": "#"}]
