@@ -1,459 +1,173 @@
-const API_BASE = "https://trendpick-api.onrender.com";
+/**
+ * 트렌드픽 2.0 - 통합 이슈 대시보드
+ * 구글 뉴스, 네이트 실검, 유튜브 인기, 커뮤니티(웃대/보배) 통합
+ */
 
-const SAMPLE_TRENDS = [
-  {
-    rank: 1,
-    keyword: "트럼프",
-    category: "정치",
-    summary: "트럼프 관련 주요 보도",
-    headlines: ["트럼프, 호르무즈 해협 명칭 변경 검토"],
-    links: [],
-    delta: 3,
-    views: 0
+const PROXY_URL = "https://api.allorigins.win/get?url=";
+
+// 1. 데이터 소스 설정
+const SOURCES = {
+  google: {
+    name: "구글 뉴스",
+    url: "https://news.google.com/rss/search?q=주요뉴스&hl=ko&gl=KR&ceid=KR:ko",
+    type: "rss"
   },
-  {
-    rank: 2,
-    keyword: "닌텐도",
-    category: "게임",
-    summary: "닌텐도 관련 주요 보도",
-    headlines: ["닌텐도, 스위치2 생산 줄인다"],
-    links: [],
-    delta: 1,
-    views: 0
+  nate: {
+    name: "네이트 실검",
+    url: "https://www.nate.com/js/data/keywordList.js",
+    type: "nate"
+  },
+  youtube: {
+    name: "유튜브 인기",
+    url: "https://www.youtube.com/feeds/videos.xml?chart=mostPopular&regionCode=KR",
+    type: "rss-yt"
+  },
+  humor: {
+    name: "웃긴대학",
+    url: "http://rss.humoruniv.com/rss/best.xml",
+    type: "rss"
+  },
+  bobae: {
+    name: "보배드림",
+    url: "https://m.bobaedream.co.kr/board/bbs/best/rss",
+    type: "rss"
   }
-];
-
-const CATEGORIES = ["전체", "정치", "경제", "스포츠", "연예", "게임"];
-
-const state = {
-  category: "전체",
-  search: "",
-  trends: [],
-  selected: null,
-  favorites: loadFavorites(),
-  isRefreshing: false
 };
 
-const el = {
-  tabs: document.getElementById("categoryTabs"),
-  list: document.getElementById("trendList"),
-  updatedAt: document.getElementById("updatedAt"),
-  sourceState: document.getElementById("sourceState"),
-  refreshBtn: document.getElementById("refreshBtn"),
-  searchInput: document.getElementById("searchInput"),
-  detailSheet: document.getElementById("detailSheet"),
-  detailRank: document.getElementById("detailRank"),
-  detailKeyword: document.getElementById("detailKeyword"),
-  detailSummary: document.getElementById("detailSummary"),
-  detailLinks: document.getElementById("detailLinks"),
-  closeDetailBtn: document.getElementById("closeDetailBtn"),
-  sheetBackdrop: document.getElementById("sheetBackdrop"),
-  favoriteBtn: document.getElementById("favoriteBtn"),
-  shareBtn: document.getElementById("shareBtn"),
-  showFavoritesBtn: document.getElementById("showFavoritesBtn"),
-  favoritesSheet: document.getElementById("favoritesSheet"),
-  favoritesBackdrop: document.getElementById("favoritesBackdrop"),
-  closeFavoritesBtn: document.getElementById("closeFavoritesBtn"),
-  favoriteList: document.getElementById("favoriteList")
-};
+let currentSource = 'google';
+let allData = []; // 현재 불러온 전체 데이터 저장 (검색용)
 
-function saveCache(key, value) {
-  localStorage.setItem(key, JSON.stringify(value));
-}
+// 2. 초기화 및 이벤트 바인딩
+document.addEventListener('DOMContentLoaded', () => {
+  renderTabs();
+  loadData(currentSource);
 
-function loadCache(key) {
-  const raw = localStorage.getItem(key);
-  if (!raw) return null;
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
-}
-
-function cacheKeyForCategory(category) {
-  return `trendpick-last-success-${category}`;
-}
-
-function loadFavorites() {
-  return loadCache("trendpick-favorites") || [];
-}
-
-function saveFavorites() {
-  saveCache("trendpick-favorites", state.favorites);
-}
-
-function formatTime(date) {
-  const d = new Date(date);
-  return d.toLocaleString("ko-KR", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit"
+  // 새로고침 버튼
+  document.getElementById('refreshBtn').addEventListener('click', () => loadData(currentSource));
+  
+  // 검색 기능
+  document.getElementById('searchInput').addEventListener('input', (e) => {
+    filterData(e.target.value);
   });
-}
 
-function escapeHtml(text) {
-  return String(text || "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
-}
+  // 상세창 닫기
+  document.getElementById('closeDetailBtn').addEventListener('click', closeDetail);
+  document.getElementById('sheetBackdrop').addEventListener('click', closeDetail);
+});
 
+// 3. 카테고리 탭 생성
 function renderTabs() {
-  el.tabs.innerHTML = "";
-  CATEGORIES.forEach((name) => {
-    const btn = document.createElement("button");
-    btn.className = "tab" + (state.category === name ? " active" : "");
-    btn.textContent = name;
-    btn.addEventListener("click", () => {
-      state.category = name;
-      renderTabs();
-      showCachedOrSampleImmediately();
-      fetchAndRender();
-    });
-    el.tabs.appendChild(btn);
-  });
+  const container = document.getElementById('categoryTabs');
+  container.innerHTML = Object.keys(SOURCES).map(key => `
+    <button class="action-btn ${currentSource === key ? 'active' : ''}" 
+            onclick="switchSource('${key}')" 
+            style="flex: 0 0 auto; ${currentSource === key ? 'background:#f5f7fb; color:#0f1115;' : ''}">
+      ${SOURCES[key].name}
+    </button>
+  `).join('');
 }
 
-function renderStatus(kind) {
-  const map = {
-    loading: "불러오는 중",
-    live: "실시간 서버 데이터",
-    cached: "마지막 저장 데이터",
-    sample: "샘플 데이터",
-    updating: "업데이트 중"
-  };
-  el.sourceState.textContent = map[kind] || kind;
+// 4. 소스 전환
+function switchSource(sourceKey) {
+  currentSource = sourceKey;
+  renderTabs();
+  loadData(sourceKey);
 }
 
-function filterBySearch(items) {
-  if (!state.search.trim()) return items;
-  const q = state.search.trim().toLowerCase();
+// 5. 데이터 불러오기 핵심 로직
+async function loadData(sourceKey) {
+  const source = SOURCES[sourceKey];
+  const trendList = document.getElementById('trendList');
+  const sourceState = document.getElementById('sourceState');
+  const updatedAt = document.getElementById('updatedAt');
 
-  return items.filter((item) => {
-    const keyword = String(item.keyword || "").toLowerCase();
-    const summary = String(item.summary || "").toLowerCase();
-    const headlines = Array.isArray(item.headlines) ? item.headlines : [];
+  trendList.innerHTML = '<p style="padding:20px; text-align:center; color:#9aa3b2;">데이터를 낚아올리는 중...</p>';
+  sourceState.innerText = "서버 연결 중...";
 
-    return (
-      keyword.includes(q) ||
-      summary.includes(q) ||
-      headlines.some((h) => String(h).toLowerCase().includes(q))
-    );
-  });
-}
-
-function normalizeServerData(data) {
-  if (!Array.isArray(data)) return [];
-
-  return data.map((item, index) => ({
-    rank: item.rank ?? index + 1,
-    keyword: item.keyword ?? `이슈 ${index + 1}`,
-    delta: item.delta ?? 0,
-    category: item.category ?? "일반",
-    summary: item.summary ?? item.keyword ?? "실시간 이슈입니다.",
-    headlines: Array.isArray(item.headlines) ? item.headlines : [],
-    links: Array.isArray(item.links) ? item.links : [],
-    views: item.views ?? 0
-  }));
-}
-
-function renderCurrentList() {
-  renderList(filterBySearch(state.trends));
-}
-
-function renderList(items) {
-  if (!items.length) {
-    el.list.innerHTML = '<div class="empty">보여줄 이슈가 없어요.</div>';
-    return;
-  }
-
-  el.list.innerHTML = "";
-
-  items.forEach((item, idx) => {
-    const article = document.createElement("article");
-    article.className = "trend-item card-enter";
-    article.style.animationDelay = `${idx * 0.04}s`;
-
-    const previewHeadlines = (item.headlines || []).slice(0, 3);
-
-    const deltaHtml = item.delta > 0
-      ? `<div class="delta-badge">▲ +${item.delta}</div>`
-      : `<div class="delta-badge delta-flat">-</div>`;
-
-    article.innerHTML = `
-      <div class="trend-top">
-        <div class="rank-badge">${item.rank}</div>
-        <div class="trend-main">
-          <div class="trend-title-row">
-            <div class="trend-title big-title">
-              ${escapeHtml(item.keyword)}
-            </div>
-            <div class="chip">${escapeHtml(item.category)}</div>
-          </div>
-
-          <div class="meta-row">
-            ${deltaHtml}
-            <div class="view-badge">조회 ${item.views || 0}</div>
-          </div>
-
-          <p class="summary big-summary">
-            ${escapeHtml(item.summary)}
-          </p>
-
-          <div class="headline-preview">
-            ${previewHeadlines.map((h) => `
-              <div class="preview-item">
-                • ${escapeHtml(h)}
-              </div>
-            `).join("")}
-          </div>
-
-          <div class="item-actions">
-            <button class="action-btn" data-action="detail">자세히</button>
-            <button class="action-btn" data-action="favorite">${state.favorites.includes(item.keyword) ? "★ 저장됨" : "☆ 저장"}</button>
-          </div>
-        </div>
-      </div>
-    `;
-
-    article.querySelector('[data-action="detail"]').addEventListener("click", () => openDetail(item));
-    article.querySelector('[data-action="favorite"]').addEventListener("click", () => toggleFavorite(item.keyword));
-
-    el.list.appendChild(article);
-  });
-}
-
-async function trackView(keyword) {
   try {
-    await fetch(`${API_BASE}/track-view`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ keyword })
-    });
-  } catch {
-    // 실패해도 무시
+    const response = await fetch(PROXY_URL + encodeURIComponent(source.url));
+    const json = await response.json();
+    const parser = new DOMParser();
+    allData = [];
+
+    if (source.type === 'rss' || source.type === 'rss-yt') {
+      const xml = parser.parseFromString(json.contents, "text/xml");
+      const items = xml.querySelectorAll(source.type === 'rss-yt' ? "entry" : "item");
+
+      items.forEach((item, idx) => {
+        allData.push({
+          rank: idx + 1,
+          title: item.querySelector("title").textContent,
+          link: source.type === 'rss-yt' ? item.querySelector("link").getAttribute("href") : item.querySelector("link").textContent,
+          summary: item.querySelector("description") ? item.querySelector("description").textContent : "내용 요약 없음",
+          source: source.name
+        });
+      });
+    } else if (source.type === 'nate') {
+      // 네이트 실검 파싱 (특수 케이스)
+      const content = json.contents;
+      const regex = /\["(.*?)",/g;
+      let match;
+      let idx = 1;
+      while ((match = regex.exec(content)) !== null) {
+        if (idx > 10) break;
+        allData.push({
+          rank: idx++,
+          title: match[1],
+          link: `https://search.daum.net/search?w=tot&q=${encodeURIComponent(match[1])}`,
+          summary: "현재 네이트 인기 검색어입니다.",
+          source: "네이트"
+        });
+      }
+    }
+
+    renderList(allData);
+    sourceState.innerText = "실시간 서버 데이터";
+    updatedAt.innerText = new Date().toLocaleString('ko-KR', { hour12: true });
+
+  } catch (error) {
+    console.error(error);
+    sourceState.innerText = "오프라인 (데이터 로드 실패)";
+    trendList.innerHTML = '<p style="padding:20px; text-align:center;">데이터를 불러오지 못했습니다. 😢</p>';
   }
 }
 
-function openDetail(item) {
-  state.selected = item;
-  el.detailRank.textContent = `${item.rank}위 · ${item.category}`;
-  el.detailKeyword.textContent = item.keyword;
-  el.detailSummary.textContent = item.summary || item.keyword;
-
-  trackView(item.keyword);
-
-  if (item.links && item.links.length) {
-    el.detailLinks.innerHTML = item.links.map((link, index) => `
-      <a class="link-item" href="${link.url}" target="_blank" rel="noopener noreferrer"
-         style="display:block; padding:14px; margin:10px 0; border:1px solid rgba(255,255,255,0.12); border-radius:14px; text-decoration:none; color:inherit;">
-        <div style="font-weight:700; margin-bottom:6px; line-height:1.45;">
-          ${index + 1}. ${escapeHtml(link.title || link.url)}
-        </div>
-        <div style="font-size:13px; opacity:0.75;">
-          ${escapeHtml(link.source || "Google News")}
-        </div>
-      </a>
-    `).join("");
-  } else if (item.headlines && item.headlines.length) {
-    el.detailLinks.innerHTML = item.headlines.map((headline, index) => `
-      <div style="padding:14px; margin:10px 0; border:1px solid rgba(255,255,255,0.12); border-radius:14px;">
-        <div style="font-weight:700; line-height:1.45;">
-          ${index + 1}. ${escapeHtml(headline)}
+// 6. 리스트 화면에 그리기
+function renderList(data) {
+  const container = document.getElementById('trendList');
+  container.innerHTML = data.map(item => `
+    <div class="trend-item" style="margin-bottom:12px; cursor:pointer;" onclick="openDetail(${JSON.stringify(item).replace(/"/g, '&quot;')})">
+      <div style="display:flex; align-items:center; gap:15px;">
+        <div style="font-size:20px; font-weight:900; color:#9aa3b2; width:24px;">${item.rank}</div>
+        <div style="flex:1;">
+          <div style="font-size:18px; font-weight:700; margin-bottom:4px;">${item.title}</div>
+          <div style="font-size:14px; color:#9aa3b2;">${item.source}</div>
         </div>
       </div>
-    `).join("");
-  } else {
-    el.detailLinks.innerHTML = '<div class="empty">현재 연결된 기사 정보가 없어요.</div>';
-  }
+    </div>
+  `).join('');
+}
 
-  el.favoriteBtn.textContent = state.favorites.includes(item.keyword) ? "즐겨찾기 해제" : "즐겨찾기";
-  el.detailSheet.classList.remove("hidden");
+// 7. 검색 필터
+function filterData(query) {
+  const filtered = allData.filter(item => item.title.includes(query));
+  renderList(filtered);
+}
+
+// 8. 상세 시트 열기/닫기
+function openDetail(item) {
+  document.getElementById('detailRank').innerText = `#${item.rank} - ${item.source}`;
+  document.getElementById('detailKeyword').innerText = item.title;
+  document.getElementById('detailSummary').innerHTML = item.summary;
+  
+  const linkContainer = document.getElementById('detailLinks');
+  linkContainer.innerHTML = `<button class="action-btn" style="width:100%;" onclick="window.open('${item.link}', '_blank')">원본 바로가기</button>`;
+
+  document.getElementById('sheetBackdrop').classList.remove('hidden');
+  document.getElementById('detailSheet').classList.remove('hidden');
 }
 
 function closeDetail() {
-  el.detailSheet.classList.add("hidden");
+  document.getElementById('sheetBackdrop').classList.add('hidden');
+  document.getElementById('detailSheet').classList.add('hidden');
 }
-
-function openFavorites() {
-  renderFavorites();
-  el.favoritesSheet.classList.remove("hidden");
-}
-
-function closeFavorites() {
-  el.favoritesSheet.classList.add("hidden");
-}
-
-function renderFavorites() {
-  if (!state.favorites.length) {
-    el.favoriteList.innerHTML = '<div class="empty">저장한 이슈가 아직 없어요.</div>';
-    return;
-  }
-
-  const currentMap = new Map(state.trends.map((item) => [item.keyword, item]));
-  el.favoriteList.innerHTML = state.favorites.map((keyword) => {
-    const item = currentMap.get(keyword);
-    return `
-      <div class="favorite-item" data-key="${escapeHtml(keyword)}">
-        <div>${escapeHtml(keyword)}</div>
-        <div class="favorite-meta">${escapeHtml(item ? (item.summary || item.keyword) : "현재 목록에는 없지만 저장된 이슈입니다.")}</div>
-      </div>
-    `;
-  }).join("");
-
-  el.favoriteList.querySelectorAll(".favorite-item").forEach((node) => {
-    node.addEventListener("click", () => {
-      const item = currentMap.get(node.dataset.key);
-      if (item) {
-        closeFavorites();
-        openDetail(item);
-      }
-    });
-  });
-}
-
-function toggleFavorite(keyword) {
-  const idx = state.favorites.indexOf(keyword);
-  if (idx >= 0) {
-    state.favorites.splice(idx, 1);
-  } else {
-    state.favorites.unshift(keyword);
-  }
-
-  saveFavorites();
-  renderCurrentList();
-
-  if (state.selected && state.selected.keyword === keyword) {
-    el.favoriteBtn.textContent = state.favorites.includes(keyword) ? "즐겨찾기 해제" : "즐겨찾기";
-  }
-
-  renderFavorites();
-}
-
-function showCachedOrSampleImmediately() {
-  const cached = loadCache(cacheKeyForCategory(state.category));
-
-  if (cached && Array.isArray(cached.trends) && cached.trends.length) {
-    state.trends = cached.trends;
-    el.updatedAt.textContent = formatTime(cached.updatedAt || Date.now());
-    renderStatus("cached");
-    renderCurrentList();
-    return;
-  }
-
-  state.trends = SAMPLE_TRENDS;
-  el.updatedAt.textContent = formatTime(Date.now());
-  renderStatus("sample");
-  renderCurrentList();
-}
-
-async function fetchAndRender() {
-  if (state.isRefreshing) return;
-  state.isRefreshing = true;
-  renderStatus("updating");
-
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
-
-    const response = await fetch(
-      `${API_BASE}/trends?category=${encodeURIComponent(state.category)}&limit=20`,
-      {
-        cache: "no-store",
-        signal: controller.signal
-      }
-    );
-
-    clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      throw new Error("서버 응답 실패");
-    }
-
-    const data = await response.json();
-    const trends = normalizeServerData(data);
-
-    if (!trends.length) {
-      throw new Error("데이터 없음");
-    }
-
-    state.trends = trends;
-    saveCache(cacheKeyForCategory(state.category), {
-      updatedAt: Date.now(),
-      trends
-    });
-
-    el.updatedAt.textContent = formatTime(Date.now());
-    renderStatus("live");
-    renderCurrentList();
-  } catch (error) {
-    const cached = loadCache(cacheKeyForCategory(state.category));
-
-    if (cached && Array.isArray(cached.trends) && cached.trends.length) {
-      state.trends = cached.trends;
-      el.updatedAt.textContent = formatTime(cached.updatedAt || Date.now());
-      renderStatus("cached");
-      renderCurrentList();
-    } else {
-      state.trends = SAMPLE_TRENDS;
-      el.updatedAt.textContent = formatTime(Date.now());
-      renderStatus("sample");
-      renderCurrentList();
-    }
-  } finally {
-    state.isRefreshing = false;
-  }
-}
-
-function bindEvents() {
-  el.refreshBtn.addEventListener("click", () => fetchAndRender());
-
-  el.searchInput.addEventListener("input", (e) => {
-    state.search = e.target.value;
-    renderCurrentList();
-  });
-
-  el.closeDetailBtn.addEventListener("click", closeDetail);
-  el.sheetBackdrop.addEventListener("click", closeDetail);
-
-  el.favoriteBtn.addEventListener("click", () => {
-    if (state.selected) toggleFavorite(state.selected.keyword);
-  });
-
-  el.shareBtn.addEventListener("click", async () => {
-    if (!state.selected) return;
-
-    const text = state.selected.keyword;
-
-    try {
-      if (navigator.share) {
-        await navigator.share({
-          title: state.selected.keyword,
-          text
-        });
-      } else {
-        await navigator.clipboard.writeText(text);
-        alert("제목을 복사했어요.");
-      }
-    } catch {}
-  });
-
-  el.showFavoritesBtn.addEventListener("click", openFavorites);
-  el.closeFavoritesBtn.addEventListener("click", closeFavorites);
-  el.favoritesBackdrop.addEventListener("click", closeFavorites);
-}
-
-if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./service-worker.js").catch(() => {});
-  });
-}
-
-renderTabs();
-bindEvents();
-showCachedOrSampleImmediately();
-fetchAndRender();
