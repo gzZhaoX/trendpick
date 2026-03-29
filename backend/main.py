@@ -30,11 +30,12 @@ FEEDS = {
     "연예": "https://news.google.com/rss/search?q=연예 OR 배우 OR 가수&hl=ko&gl=KR&ceid=KR:ko",
     "게임": "https://news.google.com/rss/search?q=게임 OR 스팀 OR 닌텐도&hl=ko&gl=KR&ceid=KR:ko",
 
-    # 추가 소스
     "유튜브": "https://www.youtube.com/feeds/videos.xml?channel_id=UC_x5XG1OV2P6uZZ5FSM9Ttw",
     "웃긴대학": "https://web.humoruniv.com/rss/best.xml",
     "보배드림": "https://m.bobaedream.co.kr/board/bbs/best/rss",
-    "네이트": "https://www.nate.com/js/data/keywordList.js"
+
+    # 수정된 네이트 주소
+    "네이트": "https://www.nate.com/main/srv/news/data/keywordList.today.json"
 }
 
 
@@ -49,8 +50,25 @@ def fetch_text(url: str, timeout: int = 10, encoding: str | None = None) -> str:
     return response.text
 
 
+def fetch_json(url: str, timeout: int = 10, encoding: str | None = None):
+    response = requests.get(url, headers=HEADERS, timeout=timeout)
+    response.raise_for_status()
+
+    if encoding:
+        response.encoding = encoding
+
+    return response.json()
+
+
 def clean_xml_text(xml_text: str) -> str:
     return re.sub(r'\sxmlns(:\w+)?="[^"]+"', '', xml_text)
+
+
+def normalize_title(title: str) -> str:
+    text = title.strip()
+    if " - " in text:
+        text = text.split(" - ")[0].strip()
+    return text
 
 
 def parse_standard_rss(xml_text: str, category: str):
@@ -105,49 +123,48 @@ def parse_youtube_atom(xml_text: str):
     return items
 
 
-def parse_nate_keywords(js_text: str):
-    matches = re.findall(r'"([^"]+)"', js_text)
-
-    keywords = []
-    blocked_words = {
-        "on", "off", "false", "true", "null", "undefined",
-        "button", "click", "list", "news", "keyword"
-    }
-
-    for value in matches:
-        text = value.strip()
-
-        if len(text) < 2:
-            continue
-        if text.lower() in blocked_words:
-            continue
-        if not re.search(r"[가-힣A-Za-z0-9]", text):
-            continue
-        if text in keywords:
-            continue
-
-        keywords.append(text)
-
+def parse_nate_json(payload: dict):
     result = []
-    for i, keyword in enumerate(keywords[:10]):
+
+    # 구조가 바뀔 수 있어서 후보 키들 넉넉하게 탐색
+    candidates = (
+        payload.get("data")
+        or payload.get("keywordList")
+        or payload.get("list")
+        or payload.get("contents")
+        or []
+    )
+
+    if isinstance(candidates, dict):
+        candidates = candidates.get("list", [])
+
+    if not isinstance(candidates, list):
+        candidates = []
+
+    for i, item in enumerate(candidates[:10]):
+        if isinstance(item, dict):
+            keyword = (
+                item.get("keyword")
+                or item.get("name")
+                or item.get("k")
+                or item.get("txt")
+                or ""
+            )
+        else:
+            keyword = str(item).strip()
+
+        keyword = str(keyword).strip()
+        if not keyword:
+            continue
+
         result.append({
             "keyword": keyword,
-            "rank": i + 1,
+            "rank": len(result) + 1,
             "category": "네이트",
             "link": f"https://search.nate.com/search/all.html?q={keyword}"
         })
 
     return result
-
-
-def normalize_title(title: str) -> str:
-    text = title.strip()
-
-    # 구글뉴스 제목에서 언론사 꼬리 제거
-    if " - " in text:
-        text = text.split(" - ")[0].strip()
-
-    return text
 
 
 def clean_item_list(items: list, category: str, limit: int = 20):
@@ -180,8 +197,8 @@ def get_trends(category: str = Query(default="전체")):
 
     try:
         if selected_category == "네이트":
-            text = fetch_text(url, timeout=8, encoding="euc-kr")
-            data = parse_nate_keywords(text)
+            payload = fetch_json(url, timeout=8, encoding="utf-8")
+            data = parse_nate_json(payload)
             data = clean_item_list(data, "네이트", 10)
 
         elif selected_category == "유튜브":
